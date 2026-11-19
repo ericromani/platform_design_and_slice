@@ -240,6 +240,9 @@ Known gaps are listed in the README.
 
 ## Not in this slice (next steps)
 
+- Migrating existing services (adopt-in-place, read-only diff gate, Terraform release):
+  see [migration.md](migration.md); the chart features it needs are listed there.
+
 - GitOps deploy repo (the pipeline commits the tag; Argo pulls) instead of the pipeline
   applying the Application. `build_application` already isolates that choice.
 - DLQs and alarms in `PlatformQueue`; KMS CMKs per service.

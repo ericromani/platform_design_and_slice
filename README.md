@@ -116,6 +116,22 @@ Locally, the `make` targets play the role of merging and of the GitHub buttons:
 | run the decommission workflow | `make decommission` |
 | all of it, in order | `make demo` |
 
+## Migrating existing services
+
+Teams already on Kubernetes, with Terraform-managed AWS resources and bespoke CI, move
+onto the platform without losing any data store. Data stores and queues are **adopted in
+place**, never recreated. The sequence for each one:
+1. back it up and turn on protection;
+2. let ACK observe it read-only until the declared config matches reality;
+3. have Terraform forget it (`removed`, `destroy = false`);
+4. only then let ACK manage it;
+5. cut the workload over, staging then prod, with the old deployment kept as an instant
+   rollback.
+
+Full plan, including the platform features migrations still need (adopt-existing mode,
+read-only adoption, a diff gate), per-service phases, data-safety invariants and the wave
+plan: **[docs/migration.md](docs/migration.md)**.
+
 ## Repository map
 
 This is one repo for the demo; each top-level area stands in for a separate repository.
