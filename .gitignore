@@ -12,3 +12,6 @@ __pycache__/
 target/
 dist/
 *.tgz
+
+# IDE settings (JetBrains)
+.idea/
