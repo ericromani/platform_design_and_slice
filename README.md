@@ -41,6 +41,81 @@ Prod is reachable **only** through promotion, and promotion requires a staging
 verification record for the exact image tag. Details:
 [delivery pipeline](docs/design.md#delivery-pipeline).
 
+## Using the platform: a developer's guide
+
+What you need: Claude Code, access to the GitHub org, and this platform repo cloned (it
+carries the skills). You never need the AWS console, `kubectl`, Helm, or a pipeline file.
+
+### 1. Create a new service
+
+1. Open Claude Code in the platform repo and type `/new-service`.
+2. Describe the service in a sentence or two, the way you would to a colleague. For
+   example: "A Python service that reads orders from a queue and saves them so we can
+   look them up by order ID."
+3. Answer the follow-up questions. The agent asks for:
+   - a name, your team, and the language;
+   - what the service receives, sends and stores;
+   - whether other services call it over HTTP;
+   - whether its data should be kept if the service is ever retired.
+   If you're unsure, the agent suggests a sensible default.
+4. Read the summary the agent gives you: what will be created for your service, and the
+   environment variable names your code uses to find each one (for example
+   `SQS_ORDERS_QUEUE_NAME`). Say yes to create the repository. The agent asks again
+   before publishing it to GitHub.
+5. Open the new repo. Write your logic where the template marks it, and fill in the test
+   stubs (they are marked `TODO`). Read your queue, table or bucket names from the
+   environment variables from step 4.
+6. Run the tests. The commands are in the repo's `CLAUDE.md`, or ask your agent to run
+   them.
+7. Push a branch and open a pull request. Wait for the checks to go green and get a
+   review.
+8. Merge. That is the deploy: the service goes to staging first and, if it is healthy
+   there, on to production. If your team requires approval for production, approve the
+   waiting "prod" step in the Actions run.
+9. Check that it's live: the Actions run shows staging and prod green, and your service
+   appears on the "Platform / Service health" dashboard.
+
+### 2. Change a service
+
+- **Code changes**: branch, change the code and tests, open a pull request, and merge.
+  Merging ships it to staging and then production, exactly as in steps 7–9 above.
+- **A new queue, table, bucket, topic, database, or more capacity**: tell your agent
+  what you need, for example "this service now also publishes an `order-shipped` event"
+  or "run 4 copies in production". It updates your deploy settings and checks them.
+  Review that change in the pull request alongside your code, then merge. Your code reads
+  the new resource from the environment variable the agent names.
+- **If a release goes wrong**: you don't need to do anything to undo it. An unhealthy
+  release is rolled back automatically, and the Actions run turns red and says which
+  health check failed. Fix the problem and merge again.
+- **If production didn't update, or you want to ship to production by hand**: type
+  `/promote-service`. The agent tells you whether that version passed staging and, if so,
+  promotes it after you confirm.
+
+### 3. Retire a service
+
+1. Type `/decommission-service` and name the service. The agent lists everything the
+   service owns.
+2. Answer its questions: does anything still depend on this service, and for each place
+   it stores data, should that data be **kept** (the default) or **deleted**?
+3. In the service's GitHub repo, open **Actions → decommission → Run workflow**. Type the
+   service name to confirm, and tick "delete data" only if you chose to delete it in
+   step 2.
+4. The service is removed from staging first. Approve the production step when it asks.
+5. Archive the repository. If you kept any data, the run lists it; your team decides
+   later whether to export or delete it.
+
+### Trying the journeys in this demo repo
+
+Locally, the `make` targets play the role of merging and of the GitHub buttons:
+
+| You would… | Locally |
+|---|---|
+| merge to deploy to staging | `make deploy-staging` |
+| watch production get promoted | `make promote` |
+| see a bad release roll back | `make break-and-rollback` |
+| run the decommission workflow | `make decommission` |
+| all of it, in order | `make demo` |
+
 ## Repository map
 
 This is one repo for the demo; each top-level area stands in for a separate repository.
