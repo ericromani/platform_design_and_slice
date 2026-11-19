@@ -46,6 +46,9 @@ Round 2, what it touches (ask about each, in plain words):
   network (internal ALB/NLB), or from the internet (internet-facing, needs a cert)?
 - **Load**: expected steady replicas, and should it autoscale on CPU?
 - **Data retention on decommission**: keep (default for tables/buckets/DBs) or delete?
+  Keeping means `deletionPolicy: retain` and, for tables and DBs, AWS
+  `deletionProtection: true` (both default). Only for genuinely disposable data set
+  `deletionPolicy: delete` and `deletionProtection: false` together.
 
 If an answer implies something the platform cannot do (for example cross-account access,
 a resource another service owns, or admin IAM), say so. Do not work around it with `env`
@@ -131,5 +134,6 @@ Re-read the rules in section 2 and confirm each of these:
 - [ ] every resource the developer mentioned is declared, and nothing they did not mention;
 - [ ] access levels are the narrowest that work (`read` before `readwrite`, `consume`
       before `consumepublish`);
-- [ ] data stores' `deletionPolicy` matches what the developer chose;
+- [ ] data stores' `deletionPolicy` and `deletionProtection` match what the developer chose
+      (protection stays on unless the data is disposable);
 - [ ] you asked before any outward-facing action (`--create-github`, pushing, opening a PR).

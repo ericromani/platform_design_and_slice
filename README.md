@@ -35,7 +35,7 @@ flowchart LR
 |---|---|---|
 | **1. New service** | `/new-service` → answers questions (language, queues, tables, exposure…), writes logic, merges | Scaffolds the repo from a preset; writes and validates `deploy/values-*.yaml`; on merge creates the AWS resources, a least-privilege IRSA role and the workload in **staging**, verifies it with metrics, then promotes the same image to **prod** |
 | **2. Update a service** | Changes code and/or values (e.g. "add an SNS topic"), merges | New release goes canary → Prometheus analysis → promote, in staging then prod; an unhealthy canary is aborted and **rolled back automatically** |
-| **3. Decommission** | `/decommission-service` or the `decommission` workflow | Removes the service from staging, then prod; queues, roles and policies are deleted; tables, buckets and DBs are **retained** unless explicitly released |
+| **3. Decommission** | `/decommission-service` or the `decommission` workflow | Removes the service from staging, then prod; queues, roles and policies are deleted; tables, buckets and DBs are **retained**, and tables and DBs have AWS **deletion protection** on, unless explicitly released |
 
 Prod is reachable **only** through promotion, and promotion requires a staging
 verification record for the exact image tag. Details:
@@ -263,7 +263,7 @@ the chart's `global` values, so service values never contain environment facts.
   IAM policy whose Resource is wired from the created resource's real ARN, and a role
   whose trust is pinned to the service's ServiceAccount and carries the permissions
   boundary. ACK reconciles them against AWS.
-- **Tests**: 23 helm-unittest cases (`platform/charts/microservice/tests`), kubeconform,
+- **Tests**: 26 helm-unittest cases (`platform/charts/microservice/tests`), kubeconform,
   and the static IAM proof (`tests/test_iam_least_privilege.py`).
 
 ### Central GitHub Actions (`platform/workflows`)
@@ -372,8 +372,8 @@ Example session:
 | Check | Command | Covers |
 |---|---|---|
 | Everything static | `make test` | all rows below except e2e |
-| Repo tests (55) | `make test-python` | IAM least-privilege proof, deploy CLI, scaffold (all presets), cookbook, README drift |
-| Chart | `make test-chart` | helm lint, 23 helm-unittest cases, kubeconform, example values |
+| Repo tests (58) | `make test-python` | IAM least-privilege proof, deploy CLI, scaffold (all presets), cookbook, README drift |
+| Chart | `make test-chart` | helm lint, 26 helm-unittest cases, kubeconform, example values |
 | Terraform | `make test-terraform` | fmt + validate for staging, prod and local roots |
 | Workflows | `make test-workflows` | actionlint across central, preset and repo workflows |
 | Example service | `make test-example` | ruff, 12 unit tests (moto), LocalStack integration test |

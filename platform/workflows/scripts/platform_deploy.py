@@ -133,6 +133,17 @@ def validate_values(values_files: list[Path], chart: Path, globals_: dict[str, A
         errors.append(f"{path}: {err.message}")
 
     aws = dev.get("aws") if isinstance(dev.get("aws"), dict) else {}
+    for kind in ("dynamodb", "rds"):
+        for item in aws.get(kind) or []:
+            if (
+                isinstance(item, dict)
+                and item.get("deletionPolicy") == "delete"
+                and item.get("deletionProtection", True) is not False
+            ):
+                errors.append(
+                    f"aws.{kind}.{item.get('name')}: deletionPolicy: delete needs deletionProtection: false "
+                    "(AWS would refuse the delete and decommission would hang)"
+                )
     for kind, items in aws.items():
         seen = [i.get("name") for i in items if isinstance(i, dict)] if isinstance(items, list) else []
         dupes = {n for n in seen if seen.count(n) > 1}
@@ -577,22 +588,56 @@ def stuck_resources(namespace: str) -> list[str]:
     return out or ["(none found; check the Argo CD Application events)"]
 
 
-def wait_for_deletion_policy(namespace: str, timeout: int) -> None:
-    """Block until every ACK data store in `namespace` carries deletion-policy=delete."""
+DATA_KINDS = ("dynamodb", "s3", "rds")
+PROTECTABLE = {"dynamodb": "deletionProtectionEnabled", "rds": "deletionProtection"}  # values kind -> ACK spec field
+
+
+def release_data_stores(values: dict[str, Any]) -> list[str]:
+    """Lift both guards on every data store: deletionPolicy -> delete, deletionProtection -> off."""
+    released = []
+    for kind in DATA_KINDS:
+        for item in values.get("aws", {}).get(kind, []):
+            item["deletionPolicy"] = "delete"
+            if kind in PROTECTABLE:
+                item["deletionProtection"] = False
+            released.append(f"{kind}/{item['name']}")
+    return released
+
+
+def wait_for_data_release(namespace: str, timeout: int) -> None:
+    """Block until AWS has applied the released guards on every ACK data store.
+
+    The deletion-policy annotation must read `delete`, deletion protection must be off in
+    the spec, and ACK must report the spec synced to AWS for that generation. Deleting
+    earlier would leave ACK retrying a DeleteTable/DeleteDBInstance that AWS refuses.
+    """
     kinds = "tables.dynamodb.services.k8s.aws,buckets.s3.services.k8s.aws,dbinstances.rds.services.k8s.aws"
+    spec_field = {"Table": "deletionProtectionEnabled", "DBInstance": "deletionProtection"}
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        items = (safe_get("get", kinds, "-n", namespace) or {"items": []})["items"]
-        pending = [
-            f"{o['kind']}/{o['metadata']['name']}"
-            for o in items
-            if o["metadata"].get("annotations", {}).get("services.k8s.aws/deletion-policy") != "delete"
-        ]
+        pending = []
+        for o in (safe_get("get", kinds, "-n", namespace) or {"items": []})["items"]:
+            name, md = f"{o['kind']}/{o['metadata']['name']}", o["metadata"]
+            if md.get("annotations", {}).get("services.k8s.aws/deletion-policy") != "delete":
+                pending.append(f"{name} (deletion-policy)")
+            elif o["kind"] in spec_field:
+                if o.get("spec", {}).get(spec_field[o["kind"]]) is not False:
+                    pending.append(f"{name} (deletion protection)")
+                elif not any(
+                    c.get("type") == "ACK.ResourceSynced"
+                    and c.get("status") == "True"
+                    and c.get("observedGeneration", md.get("generation")) == md.get("generation")
+                    for c in o.get("status", {}).get("conditions", [])
+                ):
+                    pending.append(f"{name} (protection change not yet applied in AWS)")
         if not pending:
             return
-        log(f"waiting for deletion-policy=delete on {pending}")
+        log(f"waiting before deletion: {pending}")
         time.sleep(5)
-    raise PlatformError(f"data stores in {namespace} did not switch to deletion-policy=delete within {timeout}s")
+    raise PlatformError(
+        f"data stores in {namespace} were not released within {timeout}s: {pending}. "
+        "Nothing was deleted; fix the cause and re-run."
+    )
 
 
 def cmd_decommission(a: argparse.Namespace) -> None:
@@ -614,14 +659,12 @@ def cmd_decommission(a: argparse.Namespace) -> None:
         for item in values.get("aws", {}).get(kind, [])
         if item.get("deletionPolicy", "retain") == "retain"
     ]
-    if a.delete_data and retained:
-        log(f"--delete-data: switching {retained} to deletionPolicy=delete before removal")
-        for kind in ("dynamodb", "s3", "rds"):
-            for item in values.get("aws", {}).get(kind, []):
-                item["deletionPolicy"] = "delete"
+    if a.delete_data and any(values.get("aws", {}).get(k) for k in DATA_KINDS):
+        released = release_data_stores(values)
+        log(f"--delete-data: lifting deletionPolicy=retain and deletion protection on {released}")
         app["spec"]["source"]["helm"]["valuesObject"] = values
         apply(strip_server_fields(app))
-        wait_for_deletion_policy(f"{service}-{env}", a.timeout)
+        wait_for_data_release(f"{service}-{env}", a.timeout)
         retained = []
 
     log(f"deleting Application {app_name(service, env)} (cascades to every resource it created)")

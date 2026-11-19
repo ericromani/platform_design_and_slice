@@ -29,6 +29,7 @@ spec:
       accountId: string | required=true
       region: string | required=true
       deletionPolicy: string | default="retain" enum="retain,delete"
+      deletionProtection: boolean | default=true
     status:
       endpoint: ${db.status.?endpoint.?address.orValue("")}
       port: ${db.status.?endpoint.?port.orValue(0)}
@@ -95,7 +96,8 @@ spec:
           storageEncrypted: true
           publiclyAccessible: false
           multiAZ: ${schema.spec.environment == "prod"}
-          deletionProtection: ${schema.spec.environment == "prod"}
+          # AWS refuses DeleteDBInstance while this is on (default on in every environment).
+          deletionProtection: ${schema.spec.deletionProtection}
           backupRetentionPeriod: '${schema.spec.environment == "prod" ? 14 : 1}'
           copyTagsToSnapshot: true
           tags:

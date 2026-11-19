@@ -20,8 +20,10 @@ kubectl -n argocd get applications -l platform.example.com/service=<svc>
 kubectl -n <svc>-staging get platformqueues,platformtopics,platformbuckets,platformtables,platformdatabases,platformworkloadidentities
 ```
 
-From `deploy/values-prod.yaml`, list each data store and its `deletionPolicy` (DynamoDB,
-S3 and RDS default to `retain`). Ask the developer:
+From `deploy/values-prod.yaml`, list each data store with its `deletionPolicy` (DynamoDB,
+S3 and RDS default to `retain`) and, for tables and DBs, `deletionProtection` (default
+`true`; AWS refuses deletion). `--delete-data` lifts both and waits for AWS to confirm
+before deleting. Ask the developer:
 - Does anything still call this service or read its data? (Check for SNS subscribers and
   queue producers owned by other teams.)
 - For each retained store: **keep** (default; it stays in AWS and is reported), **export

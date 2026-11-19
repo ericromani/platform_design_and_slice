@@ -97,6 +97,8 @@ spec:
   sortKeyType: {{ get $ddbType .type | quote }}
   {{- end }}
   deletionPolicy: {{ .deletionPolicy | default "retain" }}
+  {{- /* not `default`: it would turn an explicit false into true */}}
+  deletionProtection: {{ ternary .deletionProtection true (hasKey . "deletionProtection") }}
 {{- end }}
 {{- range .Values.aws.rds }}
 ---
@@ -125,4 +127,5 @@ spec:
   accountId: {{ $root.Values.global.accountId | quote }}
   region: {{ $root.Values.global.region }}
   deletionPolicy: {{ .deletionPolicy | default "retain" }}
+  deletionProtection: {{ ternary .deletionProtection true (hasKey . "deletionProtection") }}
 {{- end }}

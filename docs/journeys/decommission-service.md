@@ -20,8 +20,12 @@ sequenceDiagram
   deletes ACK resources, and ACK deletes the AWS resources, **except** data stores
   annotated `services.k8s.aws/deletion-policy: retain` (the default for DynamoDB, S3 and
   RDS). Those are reported for an explicit decision.
-- `--delete-data` flips retained stores to `delete` first. Use it only after export or
-  when the data is disposable.
+- Tables and databases also have AWS **deletion protection** on by default
+  ([ADR 0007](../adr/0007-aws-deletion-protection-on-by-default.md)), so even a direct
+  AWS call cannot delete them.
+- `--delete-data` lifts both guards (retain → delete, protection → off), waits until ACK
+  confirms AWS applied the change, and only then deletes. Use it only after export or when
+  the data is disposable.
 - Staging verification records are kept as an audit trail.
 - Locally: `make decommission`. With `--delete-data`, LocalStack Community cannot
   complete the DynamoDB deletion (see README known limitations).

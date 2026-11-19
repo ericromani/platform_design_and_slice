@@ -156,3 +156,28 @@ def test_wait_tolerates_transient_api_errors(monkeypatch):
 
     monkeypatch.setattr(pd, "kubectl_json", flaky)
     assert pd.safe_get("get", "rollout", "x") is None  # logged and swallowed, caller retries
+
+
+def test_delete_policy_without_lifting_protection_is_rejected(tmp_path):
+    values = example()
+    values["aws"]["dynamodb"][0]["deletionPolicy"] = "delete"
+    with pytest.raises(pd.PlatformError, match="deletionPolicy: delete needs deletionProtection: false"):
+        pd.validate_values([write(tmp_path, values)], CHART)
+    values["aws"]["dynamodb"][0]["deletionProtection"] = False
+    pd.validate_values([write(tmp_path, values)], CHART)
+
+
+def test_release_data_stores_lifts_both_guards_only_where_they_exist():
+    values = {
+        "aws": {
+            "sqs": [{"name": "q"}],
+            "dynamodb": [{"name": "t"}],
+            "s3": [{"name": "b"}],
+            "rds": [{"name": "d", "deletionProtection": True}],
+        }
+    }
+    assert pd.release_data_stores(values) == ["dynamodb/t", "s3/b", "rds/d"]
+    assert values["aws"]["dynamodb"][0] == {"name": "t", "deletionPolicy": "delete", "deletionProtection": False}
+    assert values["aws"]["rds"][0]["deletionProtection"] is False
+    assert values["aws"]["s3"][0] == {"name": "b", "deletionPolicy": "delete"}  # S3 has no AWS protection flag
+    assert values["aws"]["sqs"][0] == {"name": "q"}  # queues are not data stores

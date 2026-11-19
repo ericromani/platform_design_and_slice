@@ -106,6 +106,9 @@ def cmd_clean_retained(a: argparse.Namespace) -> None:
         ddb = client("dynamodb", env)
         for name in ddb.list_tables()["TableNames"]:
             if name.startswith(f"{SERVICE}-"):
+                # Tables are created with deletion protection; lift it first, as
+                # decommission --delete-data does on AWS.
+                ddb.update_table(TableName=name, DeletionProtectionEnabled=False)
                 ddb.delete_table(TableName=name)
                 print(f"deleted retained table {name} in {env} ({ACCOUNTS[env]})")
 

@@ -667,6 +667,10 @@
         },
         "deletionPolicy": {
           "$ref": "#/definitions/deletionPolicy"
+        },
+        "deletionProtection": {
+          "type": "boolean",
+          "description": "DynamoDB deletion protection: AWS refuses DeleteTable until it is turned off. Default true in every environment; decommission --delete-data turns it off first."
         }
       }
     },
@@ -715,6 +719,10 @@
         },
         "deletionPolicy": {
           "$ref": "#/definitions/deletionPolicy"
+        },
+        "deletionProtection": {
+          "type": "boolean",
+          "description": "RDS deletion protection: AWS refuses DeleteDBInstance until it is turned off. Default true in every environment; decommission --delete-data turns it off first."
         }
       }
     }

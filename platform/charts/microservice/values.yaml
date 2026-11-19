@@ -152,7 +152,8 @@ aws:
   #   access: readwrite          # read | readwrite
   #   partitionKey: {name: orderId, type: string}
   #   sortKey: {name: createdAt, type: string}   # optional; type: string | number | binary
-  #   deletionPolicy: retain
+  #   deletionPolicy: retain     # Kubernetes side: keep the table when the service is removed
+  #   deletionProtection: true   # AWS side: DeleteTable is refused (default true)
   dynamodb: []
   # - name: ledger
   #   engine: postgres           # postgres | mysql
@@ -161,4 +162,5 @@ aws:
   #   allocatedStorageGB: 20
   #   access: connect            # connect (IAM database authentication)
   #   deletionPolicy: retain
+  #   deletionProtection: true   # AWS side: DeleteDBInstance is refused (default true)
   rds: []

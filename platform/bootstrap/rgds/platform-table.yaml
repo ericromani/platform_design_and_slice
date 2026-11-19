@@ -1,6 +1,7 @@
 # PlatformTable: a DynamoDB table plus an IAM policy scoped to that table (and its indexes).
-# Data stores default to deletionPolicy=retain: deleting the instance removes the
-# Kubernetes objects but ACK leaves the AWS table in place (see decommission journey).
+# Data stores are protected twice by default: deletionPolicy=retain (deleting the
+# instance leaves the AWS table in place) and deletionProtection (AWS itself refuses
+# DeleteTable). Both are lifted only by an explicit decommission --delete-data.
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
@@ -21,6 +22,7 @@ spec:
       sortKeyName: string | default=""
       sortKeyType: string | default="S" enum="S,N,B"
       deletionPolicy: string | default="retain" enum="retain,delete"
+      deletionProtection: boolean | default=true
     status:
       tableArn: ${table.status.ackResourceMetadata.arn}
       policyArn: ${policy.status.ackResourceMetadata.arn}
@@ -48,6 +50,8 @@ spec:
         spec:
           tableName: ${schema.spec.tableName}
           billingMode: PAY_PER_REQUEST
+          # AWS refuses DeleteTable while this is on (default on in every environment).
+          deletionProtectionEnabled: ${schema.spec.deletionProtection}
           attributeDefinitions: >-
             ${schema.spec.sortKeyName == ""
               ? [{"attributeName": schema.spec.partitionKeyName, "attributeType": schema.spec.partitionKeyType}]

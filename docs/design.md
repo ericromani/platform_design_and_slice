@@ -192,7 +192,7 @@ flowchart LR
 | Argo CD project | `staging`: `*-staging` namespaces only | `prod`: `*-prod` namespaces only |
 | Reached by | `deploy.yaml` (GitHub env `staging`) | `promote.yaml` (GitHub env `production`) |
 | Canary (preset default) | `[50]`, 20 s pause | `[34, 67]`, 30 s pause, 3 replicas |
-| Data stores | retained on decommission by default | same; RDS adds Multi-AZ + deletion protection |
+| Data stores | retained on decommission + AWS deletion protection (tables, DBs) by default | same; RDS adds Multi-AZ + 14-day backups |
 
 Per-environment facts (account, OIDC provider, VPC, boundary ARN) are Terraform outputs
 published to SSM `/platform/<env>/chart-globals`. The pipeline injects them as `global`,

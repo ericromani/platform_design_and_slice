@@ -30,10 +30,26 @@ aws:
     - name: orders
       access: readwrite
       partitionKey: {name: orderId, type: string}
-      deletionPolicy: retain       # default for tables
+      deletionPolicy: retain       # default: the table survives a decommission
+      deletionProtection: true     # default: AWS refuses DeleteTable
 ```
 
 Env: `SQS_ORDERS_QUEUE_NAME=<svc>-orders`, `DYNAMODB_ORDERS_TABLE=<svc>-orders`.
+
+## Disposable data (caches, scratch tables)
+
+Both guards are on by default. Turn them off together, or validation fails, because
+AWS would refuse a delete that Kubernetes asked for:
+
+```yaml
+aws:
+  dynamodb:
+    - name: cache
+      access: readwrite
+      partitionKey: {name: key, type: string}
+      deletionPolicy: delete
+      deletionProtection: false
+```
 
 ## Producer with fan-out
 
@@ -73,7 +89,8 @@ aws:
 ```
 
 Env: `RDS_LEDGER_INSTANCE_ID`. The master password stays in Secrets Manager (RDS-managed).
-Prod gets Multi-AZ, deletion protection and 14-day backups automatically.
+Deletion protection is on in every environment (`deletionProtection: true` by default);
+prod also gets Multi-AZ and 14-day backups.
 
 ## Exposure
 
@@ -123,3 +140,4 @@ rollout:
 | `aws.dynamodb.0.partitionKey.type: True is not one of …` | you wrote `type: N`; use `type: number` |
 | `env: 'AWS_REGION' should not be valid …` | platform-injected; remove it |
 | `Additional properties are not allowed ('x')` | a typo or an unsupported field; check the schema |
+| `deletionPolicy: delete needs deletionProtection: false` | set both, or keep the defaults (retain + protected) |

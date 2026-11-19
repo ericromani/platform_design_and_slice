@@ -61,3 +61,26 @@ tests:
       aws.s3: [{name: an-equally-long-bucket-x, access: read}]
     asserts:
       - failedTemplate: {}
+  - it: turns on AWS deletion protection for tables by default
+    template: aws-resources.yaml
+    documentIndex: 1
+    asserts:
+      - equal: {path: spec.deletionProtection, value: true}
+  - it: keeps an explicit deletionProtection false (does not fall back to the default)
+    template: aws-resources.yaml
+    set:
+      aws.sqs: []
+      aws.dynamodb: [{name: scratch, access: readwrite, partitionKey: {name: id, type: string}, deletionPolicy: delete, deletionProtection: false}]
+    asserts:
+      - equal: {path: spec.deletionProtection, value: false}
+      - equal: {path: spec.deletionPolicy, value: delete}
+  - it: protects RDS in every environment, not only prod
+    template: aws-resources.yaml
+    set:
+      global.vpcId: vpc-1
+      global.dbSubnetGroupName: staging-db
+      global.nodeSecurityGroupId: sg-1
+      aws: {sqs: [], dynamodb: [], rds: [{name: ledger, engine: postgres, access: connect}]}
+    asserts:
+      - equal: {path: spec.deletionProtection, value: true}
+      - equal: {path: spec.deletionPolicy, value: retain}
