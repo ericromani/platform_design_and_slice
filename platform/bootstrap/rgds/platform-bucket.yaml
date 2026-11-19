@@ -1,0 +1,88 @@
+# PlatformBucket: a private, encrypted, public-access-blocked S3 bucket plus an IAM policy
+# scoped to that bucket and its objects. Retained on deletion by default.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: platformbuckets.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PlatformBucket
+    spec:
+      bucketName: string | required=true
+      policyName: string | required=true
+      service: string | required=true
+      team: string | required=true
+      environment: string | required=true enum="staging,prod"
+      access: string | required=true enum="read,readwrite"
+      versioning: boolean | default=false
+      deletionPolicy: string | default="retain" enum="retain,delete"
+    status:
+      bucketArn: ${"arn:aws:s3:::" + schema.spec.bucketName}
+      policyArn: ${policy.status.ackResourceMetadata.arn}
+  resources:
+    - id: bucket
+      readyWhen:
+        - '${bucket.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${bucket.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: s3.services.k8s.aws/v1alpha1
+        kind: Bucket
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+          annotations:
+            services.k8s.aws/deletion-policy: ${schema.spec.deletionPolicy}
+        spec:
+          name: ${schema.spec.bucketName}
+          publicAccessBlock:
+            blockPublicACLs: true
+            blockPublicPolicy: true
+            ignorePublicACLs: true
+            restrictPublicBuckets: true
+          encryption:
+            rules:
+              - applyServerSideEncryptionByDefault:
+                  sseAlgorithm: AES256
+          versioning:
+            status: '${schema.spec.versioning ? "Enabled" : "Suspended"}'
+          tagging:
+            tagSet:
+              - key: managed-by
+                value: platform
+              - key: service
+                value: ${schema.spec.service}
+              - key: team
+                value: ${schema.spec.team}
+              - key: environment
+                value: ${schema.spec.environment}
+    - id: policy
+      readyWhen:
+        - '${policy.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${policy.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          name: ${schema.metadata.name}-policy
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.policyName}
+          description: ${"S3 " + schema.spec.access + " on " + schema.spec.bucketName}
+          policyDocument: >-
+            ${'{"Version":"2012-10-17","Statement":[' +
+            '{"Sid":"Bucket","Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":"arn:aws:s3:::' + bucket.spec.name + '"},' +
+            '{"Sid":"Objects","Effect":"Allow","Action":' +
+            (schema.spec.access == "read" ? '["s3:GetObject"]' : '["s3:GetObject","s3:PutObject","s3:DeleteObject"]') +
+            ',"Resource":"arn:aws:s3:::' + bucket.spec.name + '/*"}]}'}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: environment
+              value: ${schema.spec.environment}

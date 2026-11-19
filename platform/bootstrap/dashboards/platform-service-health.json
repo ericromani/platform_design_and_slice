@@ -1,0 +1,185 @@
+{
+  "title": "Platform / Service health",
+  "uid": "platform-service-health",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": [
+    "platform"
+  ],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "refresh": "10s",
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(up{app!=\"\"}, namespace)",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(up{namespace=~\"$namespace\",app!=\"\"}, app)",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Pods up (by version)",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (app, version) (up{namespace=~\"$namespace\",app=~\"$service\"})",
+          "legendFormat": "{{app}} {{version}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Work items / s (by outcome)",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (app, outcome) (rate(app_work_items_total{namespace=~\"$namespace\",app=~\"$service\"}[1m]))",
+          "legendFormat": "{{app}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Work failure ratio (by rollout hash) \u2014 rollout gate",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (app, rollouts_pod_template_hash) (rate(app_work_items_total{namespace=~\"$namespace\",app=~\"$service\",outcome=\"failure\"}[1m])) / clamp_min(sum by (app, rollouts_pod_template_hash) (rate(app_work_items_total{namespace=~\"$namespace\",app=~\"$service\"}[1m])), 1e-9)",
+          "legendFormat": "{{app}} {{rollouts_pod_template_hash}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP 5xx ratio \u2014 rollout gate",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (app) (rate(http_requests_total{namespace=~\"$namespace\",app=~\"$service\",status=~\"5..\"}[1m])) / clamp_min(sum by (app) (rate(http_requests_total{namespace=~\"$namespace\",app=~\"$service\"}[1m])), 1e-9)",
+          "legendFormat": "{{app}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Work latency p95",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (app, le) (rate(app_work_duration_seconds_bucket{namespace=~\"$namespace\",app=~\"$service\"}[1m])))",
+          "legendFormat": "{{app}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

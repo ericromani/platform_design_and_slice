@@ -1,0 +1,130 @@
+# PlatformDatabase: an encrypted, private RDS instance with IAM database authentication,
+# a security group that only admits the cluster's nodes, and an rds-db:connect policy for
+# the database user named after the service. The master password is generated and kept
+# in Secrets Manager by RDS (manageMasterUserPassword); the app never sees it.
+# Rendered and schema-validated by the chart tests; not exercised in the local slice
+# (LocalStack Community has no RDS).
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: platformdatabases.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PlatformDatabase
+    spec:
+      instanceId: string | required=true
+      policyName: string | required=true
+      service: string | required=true
+      team: string | required=true
+      environment: string | required=true enum="staging,prod"
+      access: string | required=true enum="connect"
+      engine: string | required=true enum="postgres,mysql"
+      engineVersion: string | required=true
+      instanceClass: string | default="db.t4g.micro"
+      allocatedStorageGB: integer | default=20 minimum=20
+      dbSubnetGroupName: string | required=true
+      vpcId: string | required=true
+      clientSecurityGroupId: string | required=true
+      accountId: string | required=true
+      region: string | required=true
+      deletionPolicy: string | default="retain" enum="retain,delete"
+    status:
+      endpoint: ${db.status.?endpoint.?address.orValue("")}
+      port: ${db.status.?endpoint.?port.orValue(0)}
+      policyArn: ${policy.status.ackResourceMetadata.arn}
+  resources:
+    - id: sg
+      readyWhen:
+        - '${sg.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${sg.status.?id.orValue("") != ""}
+      template:
+        apiVersion: ec2.services.k8s.aws/v1alpha1
+        kind: SecurityGroup
+        metadata:
+          name: ${schema.metadata.name}-sg
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.instanceId + "-db"}
+          description: ${"Database access for " + schema.spec.service}
+          vpcID: ${schema.spec.vpcId}
+          ingressRules:
+            - ipProtocol: tcp
+              fromPort: '${schema.spec.engine == "postgres" ? 5432 : 3306}'
+              toPort: '${schema.spec.engine == "postgres" ? 5432 : 3306}'
+              userIDGroupPairs:
+                - groupID: ${schema.spec.clientSecurityGroupId}
+                  description: cluster nodes
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+    - id: db
+      readyWhen:
+        - '${db.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${db.status.?dbInstanceStatus.orValue("") == "available"}
+      template:
+        apiVersion: rds.services.k8s.aws/v1alpha1
+        kind: DBInstance
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+          annotations:
+            services.k8s.aws/deletion-policy: ${schema.spec.deletionPolicy}
+        spec:
+          dbInstanceIdentifier: ${schema.spec.instanceId}
+          dbInstanceClass: ${schema.spec.instanceClass}
+          engine: ${schema.spec.engine}
+          engineVersion: ${schema.spec.engineVersion}
+          allocatedStorage: ${schema.spec.allocatedStorageGB}
+          dbSubnetGroupName: ${schema.spec.dbSubnetGroupName}
+          vpcSecurityGroupIDs:
+            - ${sg.status.id}
+          masterUsername: platform_admin
+          manageMasterUserPassword: true
+          enableIAMDatabaseAuthentication: true
+          storageEncrypted: true
+          publiclyAccessible: false
+          multiAZ: ${schema.spec.environment == "prod"}
+          deletionProtection: ${schema.spec.environment == "prod"}
+          backupRetentionPeriod: '${schema.spec.environment == "prod" ? 14 : 1}'
+          copyTagsToSnapshot: true
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: team
+              value: ${schema.spec.team}
+            - key: environment
+              value: ${schema.spec.environment}
+    - id: policy
+      readyWhen:
+        - '${policy.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${policy.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          name: ${schema.metadata.name}-policy
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.policyName}
+          description: ${"RDS IAM auth for user " + schema.spec.service.replace("-", "_") + " on " + schema.spec.instanceId}
+          policyDocument: >-
+            ${'{"Version":"2012-10-17","Statement":[{"Sid":"Connect","Effect":"Allow","Action":["rds-db:connect"],"Resource":"arn:aws:rds-db:' +
+            schema.spec.region + ':' + schema.spec.accountId + ':dbuser:' + db.status.dbiResourceID + '/' + schema.spec.service.replace("-", "_") + '"}]}'}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: environment
+              value: ${schema.spec.environment}

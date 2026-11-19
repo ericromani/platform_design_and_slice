@@ -1,0 +1,162 @@
+# Central microservice chart — default values.
+#
+# Two audiences set values here:
+#   * `global.*` is injected by the platform deploy pipeline from per-environment config
+#     (Terraform outputs). Developers MUST NOT set it; the pipeline rejects values files
+#     that do (platform/workflows/scripts/validate_values.py).
+#   * Everything else is the developer's intent, kept in the service repo as
+#     deploy/values-<env>.yaml.
+#
+# The full contract is values.schema.json; the human-readable reference is README.md.
+
+global:
+  # staging | prod
+  environment: ""
+  # 12-digit AWS account the environment lives in.
+  accountId: ""
+  region: us-east-1
+  clusterName: ""
+  # IRSA: the EKS cluster's IAM OIDC provider, e.g.
+  #   arn:aws:iam::111111111111:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/ABC
+  oidcProviderArn: ""
+  # Issuer without scheme, e.g. oidc.eks.us-east-1.amazonaws.com/id/ABC
+  oidcIssuer: ""
+  # Networking prerequisites from infra/terraform (used by RDS and load balancers).
+  vpcId: ""
+  dbSubnetGroupName: ""
+  nodeSecurityGroupId: ""
+  # In-cluster Prometheus (fed by Alloy) queried by rollout analysis.
+  prometheusAddress: http://kps-prometheus.monitoring.svc:9090
+  # Local mode (kind + LocalStack): inject the IRSA env/token the EKS pod-identity
+  # webhook would inject, and point SDKs at the LocalStack endpoint.
+  local: false
+  awsEndpointUrl: ""
+  # Local mode only: LocalStack needs S3 virtual-hosted requests on <bucket>.s3.<host>.
+  awsS3EndpointUrl: ""
+
+service:
+  # DNS-1123 label; used for every Kubernetes and AWS resource name.
+  name: ""
+  # Owning team, propagated as a label and AWS tag.
+  team: ""
+  description: ""
+
+image:
+  repository: ""
+  # Immutable tag (the build pipeline uses the git SHA). `latest` is rejected by the schema.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicas: 2
+
+containerPort: 8080
+
+# Extra plain environment variables (name: value). AWS resource coordinates are injected
+# automatically; see README "Injected environment variables".
+env: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+# Health contract (required by the platform): the app must serve both endpoints.
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 3
+    periodSeconds: 5
+    failureThreshold: 3
+  startup:
+    enabled: false
+    path: /healthz
+    failureThreshold: 30
+    periodSeconds: 2
+
+# Metrics contract: Prometheus text format, scraped by Alloy via pod annotations.
+metrics:
+  path: /metrics
+  # Defaults to containerPort when null.
+  port: null
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Progressive delivery (Argo Rollouts canary). On analysis failure the rollout aborts
+# back to the stable ReplicaSet automatically and the deploy pipeline fails.
+rollout:
+  canaryWeights: [50]
+  # Pause after each weight step before analysis runs.
+  pauseSeconds: 20
+  analysis:
+    enabled: true
+    interval: 15s
+    count: 4
+    failureLimit: 1
+    # Max ratio of HTTP 5xx responses (http_requests_total{status=~"5.."}).
+    maxHttpErrorRatio: 0.05
+    # Max ratio of failed background work items (app_work_items_total{outcome="failure"}).
+    maxWorkFailureRatio: 0.05
+
+expose:
+  service:
+    port: 80
+  # ALB (Ingress) or NLB (Service type LoadBalancer), provisioned by the AWS Load
+  # Balancer Controller installed by platform bootstrap. Not available in local mode.
+  loadBalancer:
+    enabled: false
+    # alb | nlb
+    type: alb
+    # internal | internet-facing
+    scheme: internal
+    host: ""
+    path: /
+    certificateArn: ""
+
+# AWS resources owned by this service. Each entry becomes a kro instance that creates the
+# resource via ACK plus an IAM policy scoped to exactly that resource and access level.
+# All policies are attached to the service's IRSA role; nothing else is granted.
+aws:
+  # - name: orders
+  #   access: consume            # consume | publish | consumepublish
+  #   fifo: false
+  #   visibilityTimeoutSeconds: 30
+  #   messageRetentionSeconds: 345600
+  sqs: []
+  # - name: order-events
+  #   access: publish            # publish
+  #   fifo: false
+  sns: []
+  # - name: invoices
+  #   access: readwrite          # read | readwrite
+  #   versioning: true
+  #   deletionPolicy: retain     # retain | delete
+  s3: []
+  # - name: orders
+  #   access: readwrite          # read | readwrite
+  #   partitionKey: {name: orderId, type: string}
+  #   sortKey: {name: createdAt, type: string}   # optional; type: string | number | binary
+  #   deletionPolicy: retain
+  dynamodb: []
+  # - name: ledger
+  #   engine: postgres           # postgres | mysql
+  #   engineVersion: "16.4"
+  #   instanceClass: db.t4g.micro
+  #   allocatedStorageGB: 20
+  #   access: connect            # connect (IAM database authentication)
+  #   deletionPolicy: retain
+  rds: []

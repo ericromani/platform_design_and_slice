@@ -1,0 +1,39 @@
+{{- $name := include "ms.name" . -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ms.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  # Pods that never become Ready (bad probes, crash loops) abort the rollout too.
+  progressDeadlineSeconds: 300
+  progressDeadlineAbort: true
+  selector:
+    matchLabels:
+      {{- include "ms.selectorLabels" . | nindent 6 }}
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  strategy:
+    canary:
+      steps:
+        {{- range .Values.rollout.canaryWeights }}
+        - setWeight: {{ . }}
+        - pause:
+            duration: {{ $.Values.rollout.pauseSeconds }}s
+        {{- if $.Values.rollout.analysis.enabled }}
+        - analysis:
+            templates:
+              - templateName: {{ $name }}-health
+            args:
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest
+        {{- end }}
+        {{- end }}

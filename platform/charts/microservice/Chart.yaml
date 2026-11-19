@@ -1,0 +1,15 @@
+apiVersion: v2
+name: microservice
+description: >-
+  Platform-team owned chart for every microservice. Renders the workload (Argo Rollout
+  backed by a Deployment template), Service, ServiceAccount (IRSA), health analysis and
+  kro instances that provision the service's AWS resources and least-privilege IAM role
+  through ACK.
+type: application
+# Versioned in lockstep with platform/bootstrap/rgds (the kro APIs this chart renders).
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: platform-team
+annotations:
+  platform.example.com/rgd-api-version: v1alpha1

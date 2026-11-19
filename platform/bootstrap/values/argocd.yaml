@@ -1,0 +1,50 @@
+# Argo CD: syncs each service's rendered microservice chart into <service>-<env>.
+dex: {enabled: false}
+notifications: {enabled: false}
+applicationSet: {replicas: 0}
+configs:
+  params:
+    server.insecure: true
+  cm:
+    # kro instances (PlatformQueue, PlatformTable, ...) are Healthy only once every AWS
+    # resource behind them is ACTIVE. Combined with sync-wave -1 in the chart, Argo CD
+    # does not roll out pods until their queues/tables/IAM role exist.
+    resource.customizations.health.kro.run_*: |
+      hs = {status = "Progressing", message = "waiting for kro"}
+      if obj.status ~= nil then
+        if obj.status.state == "ACTIVE" then
+          hs.status = "Healthy"
+          hs.message = "all AWS resources ready"
+        elseif obj.status.state == "ERROR" or obj.status.state == "FAILED" then
+          hs.status = "Degraded"
+          hs.message = "kro instance in state " .. obj.status.state
+        end
+        if obj.status.conditions ~= nil then
+          for _, c in ipairs(obj.status.conditions) do
+            if c.type == "Ready" and c.status == "False" and c.message ~= nil then
+              hs.message = c.message
+            end
+          end
+        end
+      end
+      return hs
+    timeout.reconciliation: 30s
+server:
+  service:
+    type: NodePort
+    nodePortHttp: 30080
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 256Mi}
+controller:
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 512Mi}
+repoServer:
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+    limits: {memory: 384Mi}
+redis:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}

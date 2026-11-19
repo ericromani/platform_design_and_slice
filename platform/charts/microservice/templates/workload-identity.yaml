@@ -1,0 +1,33 @@
+{{- if include "ms.hasAws" . -}}
+{{- $svc := include "ms.name" . -}}
+{{- $policies := list -}}
+{{- range .Values.aws.sqs }}{{ $policies = append $policies (printf "%s-sqs-%s" $svc .name) }}{{ end -}}
+{{- range .Values.aws.sns }}{{ $policies = append $policies (printf "%s-sns-%s" $svc .name) }}{{ end -}}
+{{- range .Values.aws.s3 }}{{ $policies = append $policies (printf "%s-s3-%s" $svc .name) }}{{ end -}}
+{{- range .Values.aws.dynamodb }}{{ $policies = append $policies (printf "%s-dynamodb-%s" $svc .name) }}{{ end -}}
+{{- range .Values.aws.rds }}{{ $policies = append $policies (printf "%s-rds-%s" $svc .name) }}{{ end -}}
+{{/*
+The service's IRSA role. Trust is restricted to this service's ServiceAccount in this
+namespace on this cluster's OIDC provider; permissions are exactly the per-resource
+policies created above, referenced by name (ACK resolves them to ARNs).
+*/}}
+apiVersion: kro.run/v1alpha1
+kind: PlatformWorkloadIdentity
+metadata:
+  name: {{ $svc }}-identity
+  labels:
+    {{- include "ms.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  roleName: {{ include "ms.roleName" . }}
+  service: {{ $svc }}
+  team: {{ .Values.service.team }}
+  environment: {{ include "ms.env" . }}
+  namespace: {{ .Release.Namespace }}
+  serviceAccount: {{ $svc }}
+  oidcProviderArn: {{ .Values.global.oidcProviderArn }}
+  oidcIssuer: {{ .Values.global.oidcIssuer }}
+  resourceInstances:
+    {{- toYaml $policies | nindent 4 }}
+{{- end }}

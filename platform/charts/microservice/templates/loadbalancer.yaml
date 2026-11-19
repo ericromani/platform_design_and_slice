@@ -1,0 +1,68 @@
+{{- $lb := .Values.expose.loadBalancer -}}
+{{- if $lb.enabled }}
+{{- if .Values.global.local }}
+{{- fail "expose.loadBalancer is not supported in local mode (no AWS Load Balancer Controller); disable it in local values" }}
+{{- end }}
+{{- if eq $lb.type "alb" }}
+# ALB via the AWS Load Balancer Controller (installed by platform bootstrap on EKS).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ms.name" . }}
+  labels:
+    {{- include "ms.labels" . | nindent 4 }}
+  annotations:
+    alb.ingress.kubernetes.io/scheme: {{ $lb.scheme }}
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.probes.readiness.path }}
+    alb.ingress.kubernetes.io/group.name: {{ printf "%s-%s" .Values.global.clusterName $lb.scheme }}
+    alb.ingress.kubernetes.io/tags: {{ printf "team=%s,service=%s,environment=%s" .Values.service.team (include "ms.name" .) (include "ms.env" .) }}
+    {{- if $lb.certificateArn }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ $lb.certificateArn }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    {{- end }}
+spec:
+  ingressClassName: alb
+  rules:
+    - {{- if $lb.host }}
+      host: {{ $lb.host }}
+      {{- end }}
+      http:
+        paths:
+          - path: {{ $lb.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ms.name" . }}
+                port:
+                  name: http
+{{- else }}
+# NLB via the AWS Load Balancer Controller.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ms.name" . }}-nlb
+  labels:
+    {{- include "ms.labels" . | nindent 4 }}
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    service.beta.kubernetes.io/aws-load-balancer-scheme: {{ $lb.scheme }}
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: {{ .Values.probes.readiness.path }}
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: {{ printf "team=%s,service=%s,environment=%s" .Values.service.team (include "ms.name" .) (include "ms.env" .) }}
+    {{- if $lb.certificateArn }}
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: {{ $lb.certificateArn }}
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+    {{- end }}
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  selector:
+    {{- include "ms.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: {{ if $lb.certificateArn }}https{{ else }}http{{ end }}
+      port: {{ if $lb.certificateArn }}443{{ else }}80{{ end }}
+      targetPort: http
+{{- end }}
+{{- end }}

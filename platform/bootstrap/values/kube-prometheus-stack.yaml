@@ -1,0 +1,49 @@
+# Local stand-in for Grafana Cloud: a single Prometheus that accepts Alloy's remote write,
+# plus Grafana with the platform dashboard. Trimmed for a laptop-sized kind cluster.
+fullnameOverride: kps
+defaultRules:
+  create: false
+alertmanager:
+  enabled: false
+nodeExporter:
+  enabled: false
+kubeEtcd: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeProxy: {enabled: false}
+kube-state-metrics:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+prometheusOperator:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 192Mi}
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090
+  prometheusSpec:
+    enableRemoteWriteReceiver: true
+    retention: 6h
+    scrapeInterval: 15s
+    resources:
+      requests: {cpu: 50m, memory: 256Mi}
+      limits: {memory: 768Mi}
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+grafana:
+  enabled: true
+  # Local only. Real environments use SSO-backed Grafana Cloud.
+  adminPassword: admin
+  service:
+    type: NodePort
+    nodePort: 30300
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+    limits: {memory: 256Mi}
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: monitoring

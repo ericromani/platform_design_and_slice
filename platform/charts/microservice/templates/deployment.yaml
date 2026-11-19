@@ -1,0 +1,104 @@
+{{/*
+The Deployment is the pod-template holder for the Argo Rollout (spec.workloadRef). It is
+rendered with replicas: 0 so it never runs pods itself and never fights the Rollout or
+Argo CD self-heal; the Rollout owns ReplicaSets, canary steps and automatic rollback.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ms.name" . }}
+  labels:
+    {{- include "ms.labels" . | nindent 4 }}
+spec:
+  replicas: 0
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      {{- include "ms.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ms.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+        platform.example.com/team: {{ .Values.service.team }}
+        platform.example.com/environment: {{ include "ms.env" . }}
+      annotations:
+        # Scrape contract consumed by Grafana Alloy (platform/bootstrap/observability).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ include "ms.metricsPort" . | quote }}
+        prometheus.io/path: {{ .Values.metrics.path | quote }}
+    spec:
+      serviceAccountName: {{ include "ms.name" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+            {{- if ne (int (include "ms.metricsPort" .)) (int .Values.containerPort) }}
+            - name: metrics
+              containerPort: {{ include "ms.metricsPort" . }}
+            {{- end }}
+          env:
+            {{- include "ms.platformEnv" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds | default 10 }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds | default 3 }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds | default 5 }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold | default 3 }}
+          {{- with .Values.probes.startup }}
+          {{- if .enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .path }}
+              port: http
+            periodSeconds: {{ .periodSeconds | default 2 }}
+            failureThreshold: {{ .failureThreshold | default 30 }}
+          {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if and .Values.global.local (include "ms.hasAws" .) }}
+            - name: aws-iam-token
+              mountPath: /var/run/secrets/eks.amazonaws.com/serviceaccount
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if and .Values.global.local (include "ms.hasAws" .) }}
+        # Same projected token the EKS pod-identity webhook mounts.
+        - name: aws-iam-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: sts.amazonaws.com
+                  expirationSeconds: 86400
+                  path: token
+        {{- end }}

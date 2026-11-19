@@ -1,0 +1,128 @@
+{{/*
+One kro instance per declared AWS resource. The ResourceGraphDefinitions behind these
+kinds are installed cluster-wide by platform bootstrap (platform/bootstrap/rgds) and are
+versioned with this chart. Each instance creates the ACK resource plus an ACK IAM Policy
+scoped to that resource's ARN at the requested access level; the policy is attached to
+the service role in workload-identity.yaml.
+
+Sync wave -2: Argo CD waits for these to report Healthy (kro state ACTIVE) before it
+creates the IAM role (wave -1, which needs every policy to exist) and then rolls out the
+workload (wave 0), so pods never start without their queues, tables and permissions.
+*/}}
+{{- $root := . -}}
+{{- $svc := include "ms.name" . -}}
+{{- $env := include "ms.env" . -}}
+{{- $ddbType := dict "string" "S" "number" "N" "binary" "B" -}}
+{{- range .Values.aws.sqs }}
+---
+apiVersion: kro.run/v1alpha1
+kind: PlatformQueue
+metadata:
+  name: {{ printf "%s-sqs-%s" $svc .name }}
+  labels:
+    {{- include "ms.labels" $root | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  queueName: {{ include "ms.sqsName" (dict "root" $root "item" .) }}
+  policyName: {{ printf "%s-sqs-%s" $svc .name }}
+  service: {{ $svc }}
+  team: {{ $root.Values.service.team }}
+  environment: {{ $env }}
+  access: {{ .access }}
+  fifo: {{ .fifo | default false }}
+  visibilityTimeoutSeconds: {{ .visibilityTimeoutSeconds | default 30 }}
+  messageRetentionSeconds: {{ .messageRetentionSeconds | default 345600 }}
+{{- end }}
+{{- range .Values.aws.sns }}
+---
+apiVersion: kro.run/v1alpha1
+kind: PlatformTopic
+metadata:
+  name: {{ printf "%s-sns-%s" $svc .name }}
+  labels:
+    {{- include "ms.labels" $root | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  topicName: {{ include "ms.snsName" (dict "root" $root "item" .) }}
+  policyName: {{ printf "%s-sns-%s" $svc .name }}
+  service: {{ $svc }}
+  team: {{ $root.Values.service.team }}
+  environment: {{ $env }}
+  access: {{ .access }}
+  fifo: {{ .fifo | default false }}
+{{- end }}
+{{- range .Values.aws.s3 }}
+---
+apiVersion: kro.run/v1alpha1
+kind: PlatformBucket
+metadata:
+  name: {{ printf "%s-s3-%s" $svc .name }}
+  labels:
+    {{- include "ms.labels" $root | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  bucketName: {{ include "ms.s3Name" (dict "root" $root "item" .) }}
+  policyName: {{ printf "%s-s3-%s" $svc .name }}
+  service: {{ $svc }}
+  team: {{ $root.Values.service.team }}
+  environment: {{ $env }}
+  access: {{ .access }}
+  versioning: {{ .versioning | default false }}
+  deletionPolicy: {{ .deletionPolicy | default "retain" }}
+{{- end }}
+{{- range .Values.aws.dynamodb }}
+---
+apiVersion: kro.run/v1alpha1
+kind: PlatformTable
+metadata:
+  name: {{ printf "%s-dynamodb-%s" $svc .name }}
+  labels:
+    {{- include "ms.labels" $root | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  tableName: {{ include "ms.simpleName" (dict "root" $root "item" .) }}
+  policyName: {{ printf "%s-dynamodb-%s" $svc .name }}
+  service: {{ $svc }}
+  team: {{ $root.Values.service.team }}
+  environment: {{ $env }}
+  access: {{ .access }}
+  partitionKeyName: {{ .partitionKey.name }}
+  partitionKeyType: {{ get $ddbType .partitionKey.type | quote }}
+  {{- with .sortKey }}
+  sortKeyName: {{ .name }}
+  sortKeyType: {{ get $ddbType .type | quote }}
+  {{- end }}
+  deletionPolicy: {{ .deletionPolicy | default "retain" }}
+{{- end }}
+{{- range .Values.aws.rds }}
+---
+apiVersion: kro.run/v1alpha1
+kind: PlatformDatabase
+metadata:
+  name: {{ printf "%s-rds-%s" $svc .name }}
+  labels:
+    {{- include "ms.labels" $root | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  instanceId: {{ include "ms.simpleName" (dict "root" $root "item" .) }}
+  policyName: {{ printf "%s-rds-%s" $svc .name }}
+  service: {{ $svc }}
+  team: {{ $root.Values.service.team }}
+  environment: {{ $env }}
+  access: {{ .access }}
+  engine: {{ .engine }}
+  engineVersion: {{ .engineVersion | default (ternary "16.4" "8.0.39" (eq .engine "postgres")) | quote }}
+  instanceClass: {{ .instanceClass | default "db.t4g.micro" }}
+  allocatedStorageGB: {{ .allocatedStorageGB | default 20 }}
+  dbSubnetGroupName: {{ required "global.dbSubnetGroupName is required for RDS" $root.Values.global.dbSubnetGroupName }}
+  vpcId: {{ required "global.vpcId is required for RDS" $root.Values.global.vpcId }}
+  clientSecurityGroupId: {{ required "global.nodeSecurityGroupId is required for RDS" $root.Values.global.nodeSecurityGroupId }}
+  accountId: {{ $root.Values.global.accountId | quote }}
+  region: {{ $root.Values.global.region }}
+  deletionPolicy: {{ .deletionPolicy | default "retain" }}
+{{- end }}

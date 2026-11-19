@@ -1,0 +1,39 @@
+# Exercises every feature of the chart (used by helm lint / kubeconform in CI).
+global:
+  environment: staging
+  accountId: "111111111111"
+  region: us-east-1
+  clusterName: staging
+  oidcProviderArn: arn:aws:iam::111111111111:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE
+  oidcIssuer: oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE
+  vpcId: vpc-0123456789abcdef0
+  dbSubnetGroupName: staging-db
+  nodeSecurityGroupId: sg-0123456789abcdef0
+service:
+  name: kitchen-sink
+  team: platform
+image:
+  repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/kitchen-sink
+  tag: 3f2a1bc
+env:
+  LOG_LEVEL: info
+autoscaling:
+  enabled: true
+expose:
+  loadBalancer:
+    enabled: true
+    type: alb
+    scheme: internal
+    host: kitchen-sink.internal.example.com
+aws:
+  sqs:
+    - {name: jobs, access: consume}
+    - {name: results, access: publish, fifo: true}
+  sns:
+    - {name: events, access: publish}
+  s3:
+    - {name: blobs, access: readwrite, versioning: true}
+  dynamodb:
+    - {name: state, access: readwrite, partitionKey: {name: id, type: string}, sortKey: {name: ts, type: number}}
+  rds:
+    - {name: ledger, engine: postgres, access: connect}

@@ -1,0 +1,15 @@
+# The platform chart registry (OCI). Local: the kind-registry container (plain HTTP).
+# EKS: the ECR repository the chart release workflow publishes to.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-charts
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  name: platform-charts
+  type: helm
+  enableOCI: "true"
+  url: ${CHART_REPO}
+  insecureOCIForceHttp: "${CHART_REPO_INSECURE}"

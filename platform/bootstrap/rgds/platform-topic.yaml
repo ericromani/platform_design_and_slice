@@ -1,0 +1,70 @@
+# PlatformTopic: an SNS topic plus a publish-only IAM policy on it.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: platformtopics.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PlatformTopic
+    spec:
+      topicName: string | required=true
+      policyName: string | required=true
+      service: string | required=true
+      team: string | required=true
+      environment: string | required=true enum="staging,prod"
+      access: string | required=true enum="publish"
+      fifo: boolean | default=false
+    status:
+      topicArn: ${topic.status.ackResourceMetadata.arn}
+      policyArn: ${policy.status.ackResourceMetadata.arn}
+  resources:
+    - id: topic
+      readyWhen:
+        - '${topic.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${topic.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: sns.services.k8s.aws/v1alpha1
+        kind: Topic
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.topicName}
+          fifoTopic: '${schema.spec.fifo ? "true" : omit()}'
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: team
+              value: ${schema.spec.team}
+            - key: environment
+              value: ${schema.spec.environment}
+    - id: policy
+      readyWhen:
+        - '${policy.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${policy.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          name: ${schema.metadata.name}-policy
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.policyName}
+          description: ${"SNS publish on " + schema.spec.topicName}
+          policyDocument: >-
+            ${'{"Version":"2012-10-17","Statement":[{"Sid":"Topic","Effect":"Allow","Action":["sns:Publish","sns:GetTopicAttributes"],"Resource":"' +
+            topic.status.ackResourceMetadata.arn + '"}]}'}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: environment
+              value: ${schema.spec.environment}

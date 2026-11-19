@@ -1,0 +1,16 @@
+# Local stand-in for the EKS cluster (one cluster hosts both the staging and prod
+# environments locally; see docs/design.md "Local fidelity").
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: platform
+containerdConfigPatches:
+  # Pull images pushed to the local registry (localhost:5001 on the host).
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - {containerPort: 30080, hostPort: 8080, listenAddress: "127.0.0.1"}   # Argo CD UI
+      - {containerPort: 30300, hostPort: 3000, listenAddress: "127.0.0.1"}   # Grafana
+      - {containerPort: 30090, hostPort: 9090, listenAddress: "127.0.0.1"}   # Prometheus

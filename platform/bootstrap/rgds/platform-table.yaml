@@ -1,0 +1,91 @@
+# PlatformTable: a DynamoDB table plus an IAM policy scoped to that table (and its indexes).
+# Data stores default to deletionPolicy=retain: deleting the instance removes the
+# Kubernetes objects but ACK leaves the AWS table in place (see decommission journey).
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: platformtables.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PlatformTable
+    spec:
+      tableName: string | required=true
+      policyName: string | required=true
+      service: string | required=true
+      team: string | required=true
+      environment: string | required=true enum="staging,prod"
+      access: string | required=true enum="read,readwrite"
+      partitionKeyName: string | required=true
+      partitionKeyType: string | required=true enum="S,N,B"
+      sortKeyName: string | default=""
+      sortKeyType: string | default="S" enum="S,N,B"
+      deletionPolicy: string | default="retain" enum="retain,delete"
+    status:
+      tableArn: ${table.status.ackResourceMetadata.arn}
+      policyArn: ${policy.status.ackResourceMetadata.arn}
+  resources:
+    - id: table
+      readyWhen:
+        - '${table.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${table.status.?tableStatus.orValue("") == "ACTIVE"}
+      template:
+        apiVersion: dynamodb.services.k8s.aws/v1alpha1
+        kind: Table
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+          annotations:
+            services.k8s.aws/deletion-policy: ${schema.spec.deletionPolicy}
+        spec:
+          tableName: ${schema.spec.tableName}
+          billingMode: PAY_PER_REQUEST
+          attributeDefinitions: >-
+            ${schema.spec.sortKeyName == ""
+              ? [{"attributeName": schema.spec.partitionKeyName, "attributeType": schema.spec.partitionKeyType}]
+              : [{"attributeName": schema.spec.partitionKeyName, "attributeType": schema.spec.partitionKeyType},
+                 {"attributeName": schema.spec.sortKeyName, "attributeType": schema.spec.sortKeyType}]}
+          keySchema: >-
+            ${schema.spec.sortKeyName == ""
+              ? [{"attributeName": schema.spec.partitionKeyName, "keyType": "HASH"}]
+              : [{"attributeName": schema.spec.partitionKeyName, "keyType": "HASH"},
+                 {"attributeName": schema.spec.sortKeyName, "keyType": "RANGE"}]}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: team
+              value: ${schema.spec.team}
+            - key: environment
+              value: ${schema.spec.environment}
+    - id: policy
+      readyWhen:
+        - '${policy.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${policy.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          name: ${schema.metadata.name}-policy
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.policyName}
+          description: ${"DynamoDB " + schema.spec.access + " on " + schema.spec.tableName}
+          policyDocument: >-
+            ${'{"Version":"2012-10-17","Statement":[{"Sid":"Table","Effect":"Allow","Action":' +
+            (schema.spec.access == "read"
+              ? '["dynamodb:GetItem","dynamodb:BatchGetItem","dynamodb:Query","dynamodb:Scan","dynamodb:DescribeTable"]'
+              : '["dynamodb:GetItem","dynamodb:BatchGetItem","dynamodb:Query","dynamodb:Scan","dynamodb:DescribeTable","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:DeleteItem","dynamodb:BatchWriteItem"]') +
+            ',"Resource":["' + table.status.ackResourceMetadata.arn + '","' + table.status.ackResourceMetadata.arn + '/index/*"]}]}'}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: environment
+              value: ${schema.spec.environment}
