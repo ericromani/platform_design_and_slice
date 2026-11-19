@@ -1,0 +1,70 @@
+suite: workload
+templates:
+  - deployment.yaml
+  - rollout.yaml
+  - serviceaccount.yaml
+values:
+  - values/base.yaml
+tests:
+  - it: keeps the Deployment as a zero-replica template for the Rollout
+    template: deployment.yaml
+    asserts:
+      - equal: {path: spec.replicas, value: 0}
+      - equal: {path: "spec.template.spec.containers[0].image", value: "registry.example/orders:abc1234"}
+  - it: wires the Rollout to the Deployment with canary + analysis steps
+    template: rollout.yaml
+    asserts:
+      - equal: {path: spec.workloadRef.kind, value: Deployment}
+      - equal: {path: spec.workloadRef.name, value: orders}
+      - equal: {path: spec.progressDeadlineAbort, value: true}
+      - equal: {path: "spec.strategy.canary.steps[0].setWeight", value: 50}
+      - equal: {path: "spec.strategy.canary.steps[2].analysis.templates[0].templateName", value: orders-health}
+  - it: renders the health contract as probes
+    template: deployment.yaml
+    asserts:
+      - equal: {path: "spec.template.spec.containers[0].livenessProbe.httpGet.path", value: /healthz}
+      - equal: {path: "spec.template.spec.containers[0].readinessProbe.httpGet.path", value: /readyz}
+      - equal: {path: 'spec.template.metadata.annotations["prometheus.io/path"]', value: /metrics}
+  - it: runs hardened (non-root, read-only root fs, no capabilities)
+    template: deployment.yaml
+    asserts:
+      - equal: {path: spec.template.spec.securityContext.runAsNonRoot, value: true}
+      - equal: {path: "spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem", value: true}
+      - equal: {path: "spec.template.spec.containers[0].securityContext.capabilities.drop", value: [ALL]}
+  - it: injects AWS coordinates for declared resources
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: SQS_ORDERS_QUEUE_NAME, value: orders-orders}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DYNAMODB_ORDERS_TABLE, value: orders-orders}
+  - it: annotates the ServiceAccount with the IRSA role
+    template: serviceaccount.yaml
+    asserts:
+      - equal:
+          path: 'metadata.annotations["eks.amazonaws.com/role-arn"]'
+          value: arn:aws:iam::111111111111:role/orders-staging
+  - it: does not inject web-identity env on EKS (the webhook does)
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AWS_ROLE_ARN, value: arn:aws:iam::111111111111:role/orders-staging}
+  - it: injects web-identity env and projected token in local mode
+    template: deployment.yaml
+    set:
+      global.local: true
+      global.awsEndpointUrl: http://localstack:4566
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: AWS_ROLE_ARN, value: arn:aws:iam::111111111111:role/orders-staging}
+      - equal: {path: "spec.template.spec.volumes[1].projected.sources[0].serviceAccountToken.audience", value: sts.amazonaws.com}
+  - it: omits IRSA entirely when the service declares no AWS resources
+    template: serviceaccount.yaml
+    set:
+      aws: {sqs: [], dynamodb: []}
+    asserts:
+      - notExists: {path: metadata.annotations}

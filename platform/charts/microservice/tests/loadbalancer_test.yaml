@@ -1,0 +1,32 @@
+suite: load balancers
+templates:
+  - loadbalancer.yaml
+values:
+  - values/base.yaml
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: renders an internal ALB Ingress
+    set:
+      expose.loadBalancer: {enabled: true, type: alb, scheme: internal, host: orders.example.com}
+    asserts:
+      - isKind: {of: Ingress}
+      - equal: {path: spec.ingressClassName, value: alb}
+      - equal: {path: 'metadata.annotations["alb.ingress.kubernetes.io/scheme"]', value: internal}
+      - equal: {path: 'metadata.annotations["alb.ingress.kubernetes.io/healthcheck-path"]', value: /readyz}
+  - it: renders an NLB Service with TLS when a certificate is given
+    set:
+      expose.loadBalancer: {enabled: true, type: nlb, scheme: internet-facing, certificateArn: "arn:aws:acm:us-east-1:111111111111:certificate/x"}
+    asserts:
+      - isKind: {of: Service}
+      - equal: {path: spec.loadBalancerClass, value: service.k8s.aws/nlb}
+      - equal: {path: "spec.ports[0].port", value: 443}
+  - it: refuses load balancers in local mode
+    set:
+      global.local: true
+      global.awsEndpointUrl: http://localstack:4566
+      expose.loadBalancer: {enabled: true, type: alb}
+    asserts:
+      - failedTemplate:
+          errorPattern: not supported in local mode

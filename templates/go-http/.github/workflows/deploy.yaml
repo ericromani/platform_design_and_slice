@@ -1,0 +1,43 @@
+# main: build + push the image, deploy to staging (canary + metric analysis, automatic
+# rollback), then promote the same image tag to prod. Prod is reachable only through the
+# promote workflow, which refuses tags that did not pass staging; the `production`
+# GitHub environment can additionally require reviewers.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: example-org/platform-workflows/.github/workflows/build-go.yaml@v1
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      push-image: true
+
+  staging:
+    needs: build
+    uses: example-org/platform-workflows/.github/workflows/deploy.yaml@v1
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      image-tag: ${{ needs.build.outputs.image-tag }}
+
+  prod:
+    needs: [build, staging]
+    uses: example-org/platform-workflows/.github/workflows/promote.yaml@v1
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      image-tag: ${{ needs.build.outputs.image-tag }}

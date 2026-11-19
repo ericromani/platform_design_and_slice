@@ -1,0 +1,63 @@
+suite: aws resources and identity
+templates:
+  - aws-resources.yaml
+  - workload-identity.yaml
+values:
+  - values/base.yaml
+tests:
+  - it: renders one kro instance per declared resource, before the role (wave -2)
+    template: aws-resources.yaml
+    asserts:
+      - hasDocuments: {count: 2}
+      - documentIndex: 0
+        isKind: {of: PlatformQueue}
+      - documentIndex: 0
+        equal: {path: spec.access, value: consume}
+      - documentIndex: 0
+        equal: {path: 'metadata.annotations["argocd.argoproj.io/sync-wave"]', value: "-2"}
+      - documentIndex: 1
+        isKind: {of: PlatformTable}
+      - documentIndex: 1
+        equal: {path: spec.partitionKeyType, value: S}
+  - it: retains data stores by default
+    template: aws-resources.yaml
+    documentIndex: 1
+    asserts:
+      - equal: {path: spec.deletionPolicy, value: retain}
+  - it: maps spelled-out key types to DynamoDB codes (avoids the YAML `N` boolean trap)
+    template: aws-resources.yaml
+    set:
+      aws.dynamodb: [{name: t, access: read, partitionKey: {name: id, type: number}, sortKey: {name: ts, type: binary}}]
+      aws.sqs: []
+    asserts:
+      - equal: {path: spec.partitionKeyType, value: N}
+      - equal: {path: spec.sortKeyType, value: B}
+  - it: creates the role after the resources (wave -1) and attaches exactly their policies
+    template: workload-identity.yaml
+    asserts:
+      - isKind: {of: PlatformWorkloadIdentity}
+      - equal: {path: 'metadata.annotations["argocd.argoproj.io/sync-wave"]', value: "-1"}
+      - equal: {path: spec.roleName, value: orders-staging}
+      - equal: {path: spec.serviceAccount, value: orders}
+      - equal: {path: spec.resourceInstances, value: [orders-sqs-orders, orders-dynamodb-orders]}
+      - equal: {path: spec.permissionsBoundaryArn, value: arn:aws:iam::111111111111:policy/platform-workload-boundary}
+  - it: renders no identity when the service has no AWS resources
+    template: workload-identity.yaml
+    set:
+      aws: {sqs: [], dynamodb: []}
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: suffixes FIFO queue names
+    template: aws-resources.yaml
+    set:
+      aws.sqs: [{name: jobs, access: publish, fifo: true}]
+      aws.dynamodb: []
+    asserts:
+      - equal: {path: spec.queueName, value: orders-jobs.fifo}
+  - it: fails when an S3 bucket name would exceed 63 characters
+    template: aws-resources.yaml
+    set:
+      service.name: a-very-long-service-name-abcdefg
+      aws.s3: [{name: an-equally-long-bucket-x, access: read}]
+    asserts:
+      - failedTemplate: {}

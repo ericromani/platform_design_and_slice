@@ -1,0 +1,76 @@
+# Remove a service from staging, then prod (prod waits for staging to succeed and for
+# the `production` environment's reviewers). Data stores declared with
+# deletionPolicy=retain survive unless delete-data is set; the job lists them.
+name: decommission
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: service.name from the values file (typed again as confirmation)
+        type: string
+        required: true
+      delete-data:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Confirm the service name matches this repo's values
+        env:
+
+          SERVICE: ${{ inputs.service }}
+        run: |
+          actual="$(python3 -c 'import yaml,sys; print(yaml.safe_load(open("deploy/values-prod.yaml"))["service"]["name"])')"
+          [[ "$actual" == "$SERVICE" ]] || { echo "confirmation '$SERVICE' != service.name '$actual'"; exit 1; }
+
+  staging:
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: example-org/platform-workflows/.github/actions/setup-platform@v1
+        with:
+          chart-version: "0.1.0"
+          chart-registry: oci://ghcr.io/example-org/charts
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PLATFORM_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.PLATFORM_AWS_REGION }}
+      - env:
+          CLUSTER: ${{ vars.PLATFORM_CLUSTER_NAME }}
+        run: aws eks update-kubeconfig --name "$CLUSTER"
+      - name: Decommission from staging
+        env:
+          SERVICE: ${{ inputs.service }}
+          DELETE_DATA: ${{ inputs.delete-data && 'true' || '' }}
+        run: $PLATFORM_DEPLOY decommission --env staging --service "$SERVICE" ${DELETE_DATA:+--delete-data}
+
+  prod:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: example-org/platform-workflows/.github/actions/setup-platform@v1
+        with:
+          chart-version: "0.1.0"
+          chart-registry: oci://ghcr.io/example-org/charts
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PLATFORM_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.PLATFORM_AWS_REGION }}
+      - env:
+          CLUSTER: ${{ vars.PLATFORM_CLUSTER_NAME }}
+        run: aws eks update-kubeconfig --name "$CLUSTER"
+      - name: Decommission from prod
+        env:
+          SERVICE: ${{ inputs.service }}
+          DELETE_DATA: ${{ inputs.delete-data && 'true' || '' }}
+        run: $PLATFORM_DEPLOY decommission --env prod --service "$SERVICE" ${DELETE_DATA:+--delete-data}

@@ -1,0 +1,61 @@
+# Deploy a built image to STAGING through Argo CD and gate on rollout health. Prod is not
+# reachable from here: it only accepts promote.yaml, which requires the staging record
+# this workflow writes on success.
+#
+# The job runs in the GitHub environment `staging`, whose variables point at that
+# environment's deploy role and cluster (GitHub OIDC; no static AWS keys anywhere).
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        type: string
+        required: true
+      chart-version:
+        type: string
+        default: "0.1.0"
+      values-file:
+        type: string
+        default: deploy/values-staging.yaml
+      timeout-seconds:
+        type: number
+        default: 900
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.repository }}-staging
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v7
+      - uses: example-org/platform-workflows/.github/actions/setup-platform@v1
+        with:
+          chart-version: ${{ inputs.chart-version }}
+          chart-registry: oci://ghcr.io/example-org/charts
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PLATFORM_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.PLATFORM_AWS_REGION }}
+      - name: Cluster credentials
+        env:
+          CLUSTER: ${{ vars.PLATFORM_CLUSTER_NAME }}
+        run: aws eks update-kubeconfig --name "$CLUSTER"
+      - name: Deploy, verify, roll back on failure
+        env:
+          VALUES_FILE: ${{ inputs.values-file }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+          TIMEOUT: ${{ inputs.timeout-seconds }}
+          PLATFORM_CHART_REPO: ${{ vars.PLATFORM_ARGO_CHART_REPO }}
+        run: |
+          $PLATFORM_DEPLOY deploy --env staging --globals-ssm \
+            --chart "$PLATFORM_CHART" --chart-version "$PLATFORM_CHART_VERSION" \
+            --values "$VALUES_FILE" --tag "$IMAGE_TAG" \
+            --timeout "$TIMEOUT"

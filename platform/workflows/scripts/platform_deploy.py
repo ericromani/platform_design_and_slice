@@ -448,21 +448,55 @@ def cmd_deploy(a: argparse.Namespace) -> None:
 
 
 def cmd_promote(a: argparse.Namespace) -> None:
+    """Local/one-credential promotion: check the staging ledger, then deploy to prod."""
     dev = validate_values([Path(v) for v in a.values], Path(a.chart))
-    service = dev["service"]["name"]
     staging_g = load_globals("staging", a.staging_globals, a.globals_ssm)
-    record = read_verification(staging_g, service, a.tag)
+    require_verification(staging_g, dev["service"]["name"], a.tag)
+    do_deploy(a, "prod")
+
+
+def require_verification(staging_g: dict[str, Any], service: str, tag: str) -> dict[str, Any]:
+    record = read_verification(staging_g, service, tag)
     if record is None:
         raise PlatformError(
-            f"{service}:{a.tag} has no staging verification ({ledger_key(service, a.tag)}). "
+            f"{service}:{tag} has no staging verification ({ledger_key(service, tag)}). "
             "Deploy it to staging and let the rollout analysis pass first."
         )
     log(f"staging verification found: verified {record['verifiedAt']} with chart {record['chartVersion']}")
-    do_deploy(a, "prod")
+    return record
+
+
+def cmd_check_verified(a: argparse.Namespace) -> None:
+    """CI step 1 of promotion, run with staging credentials (GitHub environment: staging)."""
+    dev = validate_values([Path(v) for v in a.values], Path(a.chart))
+    require_verification(load_globals("staging", a.globals, a.globals_ssm), dev["service"]["name"], a.tag)
+
+
+def stuck_resources(namespace: str) -> list[str]:
+    """Objects still terminating in `namespace`, with the controller's last error."""
+    kinds = (
+        "platformqueues,platformtopics,platformbuckets,platformtables,platformdatabases,"
+        "platformworkloadidentities,queues.sqs.services.k8s.aws,topics.sns.services.k8s.aws,"
+        "buckets.s3.services.k8s.aws,tables.dynamodb.services.k8s.aws,policies.iam.services.k8s.aws,"
+        "roles.iam.services.k8s.aws"
+    )
+    data = kubectl_json("get", kinds, "-n", namespace) or {"items": []}
+    out = []
+    for obj in data["items"]:
+        if not obj["metadata"].get("deletionTimestamp"):
+            continue
+        conds = obj.get("status", {}).get("conditions", [])
+        rank = {"ACK.Terminal": 0, "ACK.Recoverable": 1, "Ready": 2}
+        conds = sorted((c for c in conds if c.get("message")), key=lambda c: rank.get(c.get("type"), 9))
+        msgs = [c["message"] for c in conds]
+        out.append(f"{obj['kind']}/{obj['metadata']['name']}: {next((m for m in msgs if m), 'waiting')}")
+    return out or ["(none found; check the Argo CD Application events)"]
 
 
 def cmd_decommission(a: argparse.Namespace) -> None:
     service, env = a.service, a.env
+    # Single-cluster (local) guard. In CI the ordering is enforced by job dependencies
+    # (decommission.yaml: prod needs staging), since each environment is its own cluster.
     if env == "prod" and not a.force:
         staging = current_application(service, "staging")
         if staging is not None:
@@ -489,7 +523,7 @@ def cmd_decommission(a: argparse.Namespace) -> None:
         retained = []
 
     log(f"deleting Application {app_name(service, env)} (cascades to every resource it created)")
-    run(
+    proc = run(
         [
             "kubectl",
             "delete",
@@ -499,8 +533,15 @@ def cmd_decommission(a: argparse.Namespace) -> None:
             "argocd",
             "--wait=true",
             f"--timeout={a.timeout}s",
-        ]
+        ],
+        check=False,
     )
+    if proc.returncode != 0:
+        stuck = stuck_resources(f"{service}-{env}")
+        raise PlatformError(
+            f"{app_name(service, env)} did not finish deleting within {a.timeout}s. Resources still "
+            "terminating (fix the cause, then re-run; deletion resumes automatically):\n  - " + "\n  - ".join(stuck)
+        )
     run(
         [
             "kubectl",
@@ -562,6 +603,10 @@ def main(argv: list[str] | None = None) -> int:
     delivery(sp)
     sp.add_argument("--staging-globals", help="staging globals YAML (to read the verification ledger)")
     sp.set_defaults(fn=cmd_promote)
+
+    sp = sub.add_parser("check-verified", help="fail unless the tag passed staging (promotion step 1)")
+    common(sp, env=False)
+    sp.set_defaults(fn=cmd_check_verified)
 
     sp = sub.add_parser("decommission")
     sp.add_argument("--service", required=True)

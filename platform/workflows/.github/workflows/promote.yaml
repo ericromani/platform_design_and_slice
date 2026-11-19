@@ -1,0 +1,82 @@
+# Promote an image that already passed staging to PROD.
+#   1. verify-staging (GitHub environment `staging`): the exact tag must have a staging
+#      verification record, written only after a healthy, analysis-passing rollout.
+#   2. prod (GitHub environment `production`, which can require reviewers): deploy with
+#      the same health gate and automatic rollback.
+name: promote
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        type: string
+        required: true
+      chart-version:
+        type: string
+        default: "0.1.0"
+      values-file:
+        type: string
+        default: deploy/values-prod.yaml
+      timeout-seconds:
+        type: number
+        default: 1200
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.repository }}-prod
+  cancel-in-progress: false
+
+jobs:
+  verify-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v7
+      - uses: example-org/platform-workflows/.github/actions/setup-platform@v1
+        with:
+          chart-version: ${{ inputs.chart-version }}
+          chart-registry: oci://ghcr.io/example-org/charts
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PLATFORM_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.PLATFORM_AWS_REGION }}
+      - name: Require staging verification for ${{ inputs.image-tag }}
+        env:
+          VALUES_FILE: ${{ inputs.values-file }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+        run: |
+          $PLATFORM_DEPLOY check-verified --globals-ssm --chart "$PLATFORM_CHART" \
+            --values "$VALUES_FILE" --tag "$IMAGE_TAG"
+
+  prod:
+    needs: verify-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: example-org/platform-workflows/.github/actions/setup-platform@v1
+        with:
+          chart-version: ${{ inputs.chart-version }}
+          chart-registry: oci://ghcr.io/example-org/charts
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PLATFORM_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.PLATFORM_AWS_REGION }}
+      - name: Cluster credentials
+        env:
+          CLUSTER: ${{ vars.PLATFORM_CLUSTER_NAME }}
+        run: aws eks update-kubeconfig --name "$CLUSTER"
+      - name: Deploy, verify, roll back on failure
+        env:
+          VALUES_FILE: ${{ inputs.values-file }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+          TIMEOUT: ${{ inputs.timeout-seconds }}
+          PLATFORM_CHART_REPO: ${{ vars.PLATFORM_ARGO_CHART_REPO }}
+        run: |
+          $PLATFORM_DEPLOY deploy --env prod --i-am-the-promote-pipeline --globals-ssm \
+            --chart "$PLATFORM_CHART" --chart-version "$PLATFORM_CHART_VERSION" \
+            --values "$VALUES_FILE" --tag "$IMAGE_TAG" \
+            --timeout "$TIMEOUT"

@@ -1,0 +1,28 @@
+# Manual: remove this service from staging, then prod. Data stores with
+# deletionPolicy=retain are kept (and listed) unless delete-data is ticked.
+name: decommission
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Type the service name to confirm
+        required: true
+        type: string
+      delete-data:
+        description: Also delete retained data stores (DynamoDB, S3, RDS)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  decommission:
+    uses: example-org/platform-workflows/.github/workflows/decommission.yaml@v1
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      service: ${{ inputs.service }}
+      delete-data: ${{ inputs.delete-data }}

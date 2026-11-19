@@ -1,0 +1,53 @@
+# Deploy contract check, shared by every language build: the service's
+# deploy/values-<env>.yaml must satisfy the chart schema and the platform rules, and the
+# rendered manifests must be valid Kubernetes. Runs on every PR, long before a deploy.
+name: validate-deploy
+
+on:
+  workflow_call:
+    inputs:
+      chart-version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [staging, prod]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: example-org/platform-workflows/.github/actions/setup-platform@v1
+        with:
+          chart-version: ${{ inputs.chart-version }}
+          chart-registry: oci://ghcr.io/example-org/charts
+      - name: Validate deploy/values-${{ matrix.environment }}.yaml
+        run: $PLATFORM_DEPLOY validate --chart "$PLATFORM_CHART" --values deploy/values-${{ matrix.environment }}.yaml
+      - name: Render and schema-check manifests
+        env:
+          ENVIRONMENT: ${{ matrix.environment }}
+        run: |
+          # Placeholder globals: the real ones are only readable by the deploy role.
+          cat > "$RUNNER_TEMP/globals.yaml" <<YAML
+          global:
+            environment: ${ENVIRONMENT}
+            accountId: "000000000000"
+            region: us-east-1
+            clusterName: ci
+            oidcProviderArn: arn:aws:iam::000000000000:oidc-provider/ci
+            oidcIssuer: ci
+            vpcId: vpc-00000000
+            dbSubnetGroupName: ci
+            nodeSecurityGroupId: sg-00000000
+          YAML
+          $PLATFORM_DEPLOY render --chart "$PLATFORM_CHART" --env "$ENVIRONMENT" --tag "${GITHUB_SHA::7}" \
+            --values "deploy/values-${ENVIRONMENT}.yaml" --globals "$RUNNER_TEMP/globals.yaml" > "$RUNNER_TEMP/rendered.yaml"
+          base=https://github.com/yannh/kubeconform/releases/download/v0.8.0
+          curl -fsSLO "$base/kubeconform-linux-amd64.tar.gz" && curl -fsSLO "$base/CHECKSUMS"
+          grep " kubeconform-linux-amd64.tar.gz$" CHECKSUMS | sha256sum -c -
+          tar xzf kubeconform-linux-amd64.tar.gz kubeconform
+          ./kubeconform -strict -summary -ignore-missing-schemas "$RUNNER_TEMP/rendered.yaml"

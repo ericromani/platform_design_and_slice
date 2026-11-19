@@ -1,0 +1,86 @@
+# Central build for Python services (preset: templates/python-fastapi).
+# Called from a service repo:
+#   jobs:
+#     build:
+#       uses: example-org/platform-workflows/.github/workflows/build-python.yaml@v1
+#       permissions: {contents: read, id-token: write}
+#
+# lint + unit -> integration (LocalStack service container) -> deploy-values contract
+# -> container image (pushed only on main). Outputs the immutable image tag (git SHA).
+name: build-python
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.12"
+      chart-version:
+        description: microservice chart version this service deploys with
+        type: string
+        default: "0.1.0"
+      push-image:
+        description: push the image (defaults to true on the default branch)
+        type: boolean
+        default: false
+    outputs:
+      image-tag:
+        description: immutable image tag (git SHA) to deploy
+        value: ${{ jobs.image.outputs.tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Unit tests
+        run: pytest tests/unit -q
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      localstack:
+        image: localstack/localstack:4.14.0
+        ports: ["4566:4566"]
+        env:
+          SERVICES: sqs,dynamodb,sns,s3
+        options: >-
+          --health-cmd "curl -fsS http://localhost:4566/_localstack/health"
+          --health-interval 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Integration tests
+        env:
+          LOCALSTACK_ENDPOINT: http://localhost:4566
+        run: pytest tests/integration -q -m integration
+
+  deploy-contract:
+    uses: example-org/platform-workflows/.github/workflows/validate-deploy.yaml@v1
+    with:
+      chart-version: ${{ inputs.chart-version }}
+
+  image:
+    needs: [unit, integration, deploy-contract]
+    uses: example-org/platform-workflows/.github/workflows/build-image.yaml@v1
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      push: ${{ inputs.push-image || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
