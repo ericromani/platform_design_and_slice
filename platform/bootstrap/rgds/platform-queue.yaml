@@ -1,0 +1,82 @@
+# PlatformQueue: an SQS queue plus an IAM policy granting exactly one access level on it.
+# The policy's Resource is wired from the queue's ACK status (its real ARN), so the
+# permission can never be broader than the queue it was created for.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: platformqueues.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PlatformQueue
+    spec:
+      queueName: string | required=true
+      policyName: string | required=true
+      service: string | required=true
+      team: string | required=true
+      environment: string | required=true enum="staging,prod"
+      access: string | required=true enum="consume,publish,consumepublish"
+      fifo: boolean | default=false
+      visibilityTimeoutSeconds: integer | default=30
+      messageRetentionSeconds: integer | default=345600
+    status:
+      queueArn: ${queue.status.ackResourceMetadata.arn}
+      queueUrl: ${queue.status.queueURL}
+      policyArn: ${policy.status.ackResourceMetadata.arn}
+  resources:
+    - id: queue
+      readyWhen:
+        - '${queue.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${queue.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: sqs.services.k8s.aws/v1alpha1
+        kind: Queue
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          queueName: ${schema.spec.queueName}
+          fifoQueue: '${schema.spec.fifo ? "true" : omit()}'
+          visibilityTimeout: ${string(schema.spec.visibilityTimeoutSeconds)}
+          messageRetentionPeriod: ${string(schema.spec.messageRetentionSeconds)}
+          sqsManagedSSEEnabled: "true"
+          tags:
+            managed-by: platform
+            service: ${schema.spec.service}
+            team: ${schema.spec.team}
+            environment: ${schema.spec.environment}
+    - id: policy
+      readyWhen:
+        - '${policy.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${policy.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          name: ${schema.metadata.name}-policy
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.policyName}
+          description: ${"SQS " + schema.spec.access + " on " + schema.spec.queueName}
+          # consume        -> receive/delete/extend visibility
+          # publish        -> send
+          # consumepublish -> both
+          policyDocument: >-
+            ${'{"Version":"2012-10-17","Statement":[{"Sid":"Queue","Effect":"Allow","Action":' +
+            (schema.spec.access == "consume"
+              ? '["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:ChangeMessageVisibility","sqs:GetQueueAttributes","sqs:GetQueueUrl"]'
+              : schema.spec.access == "publish"
+                ? '["sqs:SendMessage","sqs:GetQueueAttributes","sqs:GetQueueUrl"]'
+                : '["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:ChangeMessageVisibility","sqs:SendMessage","sqs:GetQueueAttributes","sqs:GetQueueUrl"]') +
+            ',"Resource":"' + queue.status.ackResourceMetadata.arn + '"}]}'}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: environment
+              value: ${schema.spec.environment}

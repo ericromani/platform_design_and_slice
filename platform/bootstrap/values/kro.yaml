@@ -1,0 +1,12 @@
+deployment:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+config:
+  featureGates:
+    # omit(): send FIFO attributes only for FIFO queues/topics (SQS rejects FifoQueue on
+    # standard queues). Alpha in kro 0.10; see docs/adr/0002-kro-composition.md.
+    CELOmitFunction: true

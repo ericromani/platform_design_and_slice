@@ -1,0 +1,40 @@
+name: setup-platform
+description: >-
+  Install the platform deploy tooling (pinned to the same ref as the calling workflow) and
+  fetch the microservice chart at the platform's pinned version. Exposes PLATFORM_DEPLOY
+  (the CLI) and PLATFORM_CHART (the unpacked chart) to later steps.
+inputs:
+  chart-version:
+    description: microservice chart version to validate/render/deploy against
+    required: true
+  chart-registry:
+    description: OCI registry the chart is published to (oci://.../charts)
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+    - uses: azure/setup-helm@v5
+      with:
+        version: v3.22.1
+    - name: Install platform CLI
+      shell: bash
+      run: |
+        # github.action_path is inside the downloaded platform-workflows repo at the
+        # caller's pinned ref, so scripts and workflows can never drift apart.
+        root="$(cd "${GITHUB_ACTION_PATH}/../../.." && pwd)"
+        python -m pip install --quiet -r "$root/requirements.txt"
+        echo "PLATFORM_DEPLOY=python $root/scripts/platform_deploy.py" >> "$GITHUB_ENV"
+    - name: Fetch chart ${{ inputs.chart-version }}
+      shell: bash
+      env:
+        CHART_VERSION: ${{ inputs.chart-version }}
+        CHART_REGISTRY: ${{ inputs.chart-registry }}
+      run: |
+        dest="$RUNNER_TEMP/chart"
+        mkdir -p "$dest"
+        helm pull "$CHART_REGISTRY/microservice" --version "$CHART_VERSION" --untar --untardir "$dest"
+        echo "PLATFORM_CHART=$dest/microservice" >> "$GITHUB_ENV"
+        echo "PLATFORM_CHART_VERSION=$CHART_VERSION" >> "$GITHUB_ENV"

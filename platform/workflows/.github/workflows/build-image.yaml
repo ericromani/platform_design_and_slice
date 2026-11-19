@@ -1,0 +1,60 @@
+# Build the service image from its Dockerfile and (optionally) push it to ECR, tagged
+# with the commit SHA. Tags are immutable: the same SHA is what staging verifies and
+# what prod promotes.
+name: build-image
+
+on:
+  workflow_call:
+    inputs:
+      push:
+        type: boolean
+        default: false
+    outputs:
+      tag:
+        value: ${{ jobs.image.outputs.tag }}
+      digest:
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: meta
+        run: |
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "repo=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: inputs.push
+        with:
+          role-to-assume: ${{ vars.PLATFORM_BUILD_ROLE_ARN }}
+          aws-region: us-east-1
+      - id: ecr
+        if: inputs.push
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Ensure ECR repository
+        if: inputs.push
+        env:
+          REPO: ${{ steps.meta.outputs.repo }}
+        run: |
+          aws ecr describe-repositories --repository-names "$REPO" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "$REPO" \
+              --image-tag-mutability IMMUTABLE --image-scanning-configuration scanOnPush=true >/dev/null
+      - uses: docker/setup-buildx-action@v4
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: ${{ inputs.push }}
+          tags: ${{ inputs.push && format('{0}/{1}:{2}', steps.ecr.outputs.registry, steps.meta.outputs.repo, steps.meta.outputs.tag) || format('{0}:{1}', steps.meta.outputs.repo, steps.meta.outputs.tag) }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

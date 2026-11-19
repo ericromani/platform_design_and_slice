@@ -1,0 +1,24 @@
+global:
+  environment: staging
+  accountId: "111111111111"
+  region: us-east-1
+  clusterName: staging
+  oidcProviderArn: arn:aws:iam::111111111111:oidc-provider/oidc.example/id/X
+  oidcIssuer: oidc.example/id/X
+  permissionsBoundaryArn: arn:aws:iam::111111111111:policy/platform-workload-boundary
+service:
+  name: orders
+  team: commerce
+image:
+  repository: registry.example/orders
+  tag: abc1234
+probes:
+  liveness: {path: /healthz}
+  readiness: {path: /readyz}
+metrics:
+  path: /metrics
+aws:
+  sqs:
+    - {name: orders, access: consume}
+  dynamodb:
+    - {name: orders, access: readwrite, partitionKey: {name: orderId, type: string}}

@@ -1,0 +1,62 @@
+# PlatformWorkloadIdentity: the IRSA role for one service in one environment.
+#  * Trust: only the service's ServiceAccount in its namespace, via the cluster's OIDC
+#    provider, with the sts.amazonaws.com audience.
+#  * Permissions: only the per-resource policies created by the service's other platform
+#    instances, referenced by name; nothing else is attachable through this API.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: platformworkloadidentities.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PlatformWorkloadIdentity
+    spec:
+      roleName: string | required=true
+      service: string | required=true
+      team: string | required=true
+      environment: string | required=true enum="staging,prod"
+      namespace: string | required=true
+      serviceAccount: string | required=true
+      oidcProviderArn: string | required=true
+      oidcIssuer: string | required=true
+      permissionsBoundaryArn: string | default=""
+      # Names of this service's other platform instances (same namespace); each owns a
+      # "<instance>-policy" ACK Policy that gets attached.
+      resourceInstances: "[]string | required=true"
+    status:
+      roleArn: ${role.status.ackResourceMetadata.arn}
+  resources:
+    - id: role
+      readyWhen:
+        - '${role.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${role.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Role
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.roleName}
+          description: ${"IRSA role for " + schema.spec.service + " (" + schema.spec.environment + ")"}
+          maxSessionDuration: 3600
+          # Required in real accounts: the ACK IAM controller may only create bounded roles.
+          permissionsBoundary: '${schema.spec.permissionsBoundaryArn != "" ? schema.spec.permissionsBoundaryArn : omit()}'
+          assumeRolePolicyDocument: >-
+            ${'{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"' + schema.spec.oidcProviderArn +
+            '"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"' + schema.spec.oidcIssuer +
+            ':sub":"system:serviceaccount:' + schema.spec.namespace + ':' + schema.spec.serviceAccount + '","' +
+            schema.spec.oidcIssuer + ':aud":"sts.amazonaws.com"}}}]}'}
+          policyRefs: '${schema.spec.resourceInstances.map(n, {"from": {"name": n + "-policy"}})}'
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: team
+              value: ${schema.spec.team}
+            - key: environment
+              value: ${schema.spec.environment}

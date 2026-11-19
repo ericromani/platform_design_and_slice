@@ -1,0 +1,89 @@
+# Grafana Alloy: discovers every pod that opts in via the platform scrape annotations
+# (rendered by the microservice chart) and remote-writes the samples.
+#  * Local: to the in-cluster Prometheus remote-write receiver (stand-in for Grafana Cloud).
+#  * EKS:   to Grafana Cloud; set REMOTE_WRITE_URL + basic-auth from a Secret (see CLAUDE.md).
+controller:
+  type: deployment
+  replicas: 1
+alloy:
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+    limits: {memory: 320Mi}
+  configMap:
+    create: true
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "platform_pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        // Opt-in contract: prometheus.io/scrape="true" (+ port, path).
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+          regex         = "true"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_phase"]
+          regex         = "Running"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_ip", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+          separator     = ":"
+          target_label  = "__address__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+          target_label  = "__metrics_path__"
+        }
+        // Labels the rollout AnalysisTemplate and dashboards rely on.
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_version"]
+          target_label  = "version"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_rollouts_pod_template_hash"]
+          target_label  = "rollouts_pod_template_hash"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_platform_example_com_environment"]
+          target_label  = "environment"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_platform_example_com_team"]
+          target_label  = "team"
+        }
+      }
+
+      prometheus.scrape "platform_pods" {
+        targets         = discovery.relabel.platform_pods.output
+        scrape_interval = "10s"
+        forward_to      = [prometheus.remote_write.platform.receiver]
+      }
+
+      prometheus.remote_write "platform" {
+        external_labels = { cluster = sys.env("CLUSTER_NAME") }
+        endpoint {
+          url = sys.env("REMOTE_WRITE_URL")
+        }
+      }
+  extraEnv:
+    - name: CLUSTER_NAME
+      value: platform-local
+    - name: REMOTE_WRITE_URL
+      value: http://kps-prometheus.monitoring.svc:9090/api/v1/write

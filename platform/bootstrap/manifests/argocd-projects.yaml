@@ -1,0 +1,62 @@
+# One AppProject per environment. Guardrails enforced by Argo CD, not by convention:
+#  * services may only deploy into <service>-<env> namespaces of their environment
+#  * charts may only come from the platform chart registry
+#  * only the kinds the microservice chart renders are allowed: developers cannot
+#    create raw ACK resources, RBAC, or anything cluster-scoped except their Namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: staging
+  namespace: argocd
+spec:
+  description: Pre-production. Every release must pass here before promotion to prod.
+  sourceRepos: ["${CHART_REPO}"]
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*-staging"
+  clusterResourceWhitelist:
+    - {group: "", kind: Namespace}
+  namespaceResourceWhitelist:
+    - {group: "", kind: Service}
+    - {group: "", kind: ServiceAccount}
+    - {group: apps, kind: Deployment}
+    - {group: argoproj.io, kind: Rollout}
+    - {group: argoproj.io, kind: AnalysisTemplate}
+    - {group: autoscaling, kind: HorizontalPodAutoscaler}
+    - {group: policy, kind: PodDisruptionBudget}
+    - {group: networking.k8s.io, kind: Ingress}
+    - {group: kro.run, kind: PlatformQueue}
+    - {group: kro.run, kind: PlatformTopic}
+    - {group: kro.run, kind: PlatformBucket}
+    - {group: kro.run, kind: PlatformTable}
+    - {group: kro.run, kind: PlatformDatabase}
+    - {group: kro.run, kind: PlatformWorkloadIdentity}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: prod
+  namespace: argocd
+spec:
+  description: Production. Deploys only via the promote pipeline (staging-verified digests).
+  sourceRepos: ["${CHART_REPO}"]
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*-prod"
+  clusterResourceWhitelist:
+    - {group: "", kind: Namespace}
+  namespaceResourceWhitelist:
+    - {group: "", kind: Service}
+    - {group: "", kind: ServiceAccount}
+    - {group: apps, kind: Deployment}
+    - {group: argoproj.io, kind: Rollout}
+    - {group: argoproj.io, kind: AnalysisTemplate}
+    - {group: autoscaling, kind: HorizontalPodAutoscaler}
+    - {group: policy, kind: PodDisruptionBudget}
+    - {group: networking.k8s.io, kind: Ingress}
+    - {group: kro.run, kind: PlatformQueue}
+    - {group: kro.run, kind: PlatformTopic}
+    - {group: kro.run, kind: PlatformBucket}
+    - {group: kro.run, kind: PlatformTable}
+    - {group: kro.run, kind: PlatformDatabase}
+    - {group: kro.run, kind: PlatformWorkloadIdentity}

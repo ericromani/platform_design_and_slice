@@ -1,0 +1,7 @@
+# Lint config for platform tooling (services under examples/ and templates/ carry their own).
+line-length = 120
+target-version = "py310"
+extend-exclude = ["examples", "templates", ".tools", ".venv"]
+
+[lint]
+select = ["E", "F", "I", "B", "UP"]

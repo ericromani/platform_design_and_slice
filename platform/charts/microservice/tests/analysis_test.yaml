@@ -1,0 +1,24 @@
+suite: rollout analysis
+templates:
+  - analysistemplate.yaml
+values:
+  - values/base.yaml
+tests:
+  - it: judges only canary pods, by pod-template hash
+    asserts:
+      - matchRegex:
+          path: spec.metrics[0].provider.prometheus.query
+          pattern: 'rollouts_pod_template_hash="\{\{args.canary-hash\}\}"'
+      - matchRegex:
+          path: spec.metrics[2].provider.prometheus.query
+          pattern: 'app_work_items_total\{.*outcome="failure"'
+  - it: applies the per-service failure threshold
+    set:
+      rollout.analysis.maxWorkFailureRatio: 0.2
+    asserts:
+      - equal: {path: "spec.metrics[2].successCondition", value: "len(result) == 0 || result[0] <= 0.2"}
+  - it: can be disabled
+    set:
+      rollout.analysis.enabled: false
+    asserts:
+      - hasDocuments: {count: 0}

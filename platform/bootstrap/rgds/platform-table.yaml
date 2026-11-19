@@ -1,0 +1,101 @@
+# PlatformTable: a DynamoDB table plus an IAM policy scoped to that table (and its indexes).
+# Data stores are protected twice by default: deletionPolicy=retain (deleting the
+# instance leaves the AWS table in place) and deletionProtection (AWS itself refuses
+# DeleteTable). Both are lifted only by an explicit decommission --delete-data.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: platformtables.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PlatformTable
+    spec:
+      tableName: string | required=true
+      policyName: string | required=true
+      service: string | required=true
+      team: string | required=true
+      environment: string | required=true enum="staging,prod"
+      access: string | required=true enum="read,readwrite"
+      partitionKeyName: string | required=true
+      partitionKeyType: string | required=true enum="S,N,B"
+      sortKeyName: string | default=""
+      sortKeyType: string | default="S" enum="S,N,B"
+      deletionPolicy: string | default="retain" enum="retain,delete"
+      deletionProtection: boolean | default=true
+    status:
+      tableArn: ${table.status.ackResourceMetadata.arn}
+      policyArn: ${policy.status.ackResourceMetadata.arn}
+  resources:
+    - id: table
+      # tableStatus ACTIVE is DynamoDB's own readiness signal. (ACK.ResourceSynced is not
+      # required here: LocalStack Community lacks GetResourcePolicy, which ACK calls on
+      # every sync, so the condition never turns True locally. IAM resources keep it.)
+      readyWhen:
+        - ${table.status.?tableStatus.orValue("") == "ACTIVE"}
+      template:
+        apiVersion: dynamodb.services.k8s.aws/v1alpha1
+        kind: Table
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+          annotations:
+            services.k8s.aws/deletion-policy: ${schema.spec.deletionPolicy}
+            # Retained data comes back: redeploying after a decommission re-adopts the
+            # existing AWS resource instead of failing on 'already exists'.
+            services.k8s.aws/adoption-policy: adopt-or-create
+            services.k8s.aws/adoption-fields: '{"tableName": "${schema.spec.tableName}"}'
+        spec:
+          tableName: ${schema.spec.tableName}
+          billingMode: PAY_PER_REQUEST
+          # AWS refuses DeleteTable while this is on (default on in every environment).
+          deletionProtectionEnabled: ${schema.spec.deletionProtection}
+          attributeDefinitions: >-
+            ${schema.spec.sortKeyName == ""
+              ? [{"attributeName": schema.spec.partitionKeyName, "attributeType": schema.spec.partitionKeyType}]
+              : [{"attributeName": schema.spec.partitionKeyName, "attributeType": schema.spec.partitionKeyType},
+                 {"attributeName": schema.spec.sortKeyName, "attributeType": schema.spec.sortKeyType}]}
+          keySchema: >-
+            ${schema.spec.sortKeyName == ""
+              ? [{"attributeName": schema.spec.partitionKeyName, "keyType": "HASH"}]
+              : [{"attributeName": schema.spec.partitionKeyName, "keyType": "HASH"},
+                 {"attributeName": schema.spec.sortKeyName, "keyType": "RANGE"}]}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: team
+              value: ${schema.spec.team}
+            - key: environment
+              value: ${schema.spec.environment}
+    - id: policy
+      readyWhen:
+        - '${policy.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
+        - ${policy.status.?ackResourceMetadata.?arn.orValue("") != ""}
+      template:
+        apiVersion: iam.services.k8s.aws/v1alpha1
+        kind: Policy
+        metadata:
+          name: ${schema.metadata.name}-policy
+          labels:
+            platform.example.com/environment: ${schema.spec.environment}
+            platform.example.com/service: ${schema.spec.service}
+        spec:
+          name: ${schema.spec.policyName}
+          description: ${"DynamoDB " + schema.spec.access + " on " + schema.spec.tableName}
+          policyDocument: >-
+            ${'{"Version":"2012-10-17","Statement":[{"Sid":"Table","Effect":"Allow","Action":' +
+            (schema.spec.access == "read"
+              ? '["dynamodb:GetItem","dynamodb:BatchGetItem","dynamodb:Query","dynamodb:Scan","dynamodb:DescribeTable"]'
+              : '["dynamodb:GetItem","dynamodb:BatchGetItem","dynamodb:Query","dynamodb:Scan","dynamodb:DescribeTable","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:DeleteItem","dynamodb:BatchWriteItem"]') +
+            ',"Resource":["' + table.status.ackResourceMetadata.arn + '","' + table.status.ackResourceMetadata.arn + '/index/*"]}]}'}
+          tags:
+            - key: managed-by
+              value: platform
+            - key: service
+              value: ${schema.spec.service}
+            - key: environment
+              value: ${schema.spec.environment}

@@ -1,0 +1,40 @@
+# Deploy intent for prod, rendered by the platform microservice chart.
+# Contract: ../../platform/charts/microservice/values.schema.json (published with the chart).
+# The pipeline injects `global` and sets image.tag to the built git SHA. To add AWS
+# resources, ask your agent to run the new-service skill or edit `aws:` below.
+service:
+  name: __SERVICE_NAME__
+  team: __TEAM__
+  description: __DESCRIPTION__
+
+image:
+  repository: __IMAGE_REPOSITORY__
+  tag: replaced-by-pipeline
+
+replicas: 3
+containerPort: 8080
+
+# Health contract: your app must serve these (the preset already does).
+probes:
+  liveness:
+    path: /healthz
+  readiness:
+    path: /readyz
+
+metrics:
+  path: /metrics
+
+env:
+  LOG_LEVEL: INFO
+
+rollout:
+  canaryWeights: [34, 67]
+  pauseSeconds: 30
+
+# AWS resources this service owns. Each gets a least-privilege IAM policy on the service
+# role automatically. Examples:
+#   sqs:      [{name: jobs, access: consume}]
+#   sns:      [{name: events, access: publish}]
+#   s3:       [{name: files, access: readwrite}]
+#   dynamodb: [{name: items, access: readwrite, partitionKey: {name: id, type: string}}]
+aws: {}

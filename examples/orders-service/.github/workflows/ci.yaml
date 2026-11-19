@@ -1,0 +1,16 @@
+# Pull requests: build, unit + integration tests, deploy-contract check. No push, no deploy.
+# Everything below is the platform's standard pipeline; you should not need to edit it.
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: example-org/platform-workflows/.github/workflows/build-python.yaml@v1
+    permissions:
+      contents: read
+      id-token: write

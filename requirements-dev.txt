@@ -1,0 +1,6 @@
+# Platform scripts + repo-level tests (chart schema/policy tests, scaffold tests)
+pyyaml==6.0.3
+jsonschema==4.25.1
+pytest==8.4.2
+boto3==1.40.76
+ruff==0.14.5

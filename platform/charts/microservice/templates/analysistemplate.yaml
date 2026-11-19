@@ -1,0 +1,54 @@
+{{- if .Values.rollout.analysis.enabled -}}
+{{- $name := include "ms.name" . -}}
+{{- $a := .Values.rollout.analysis -}}
+{{- $sel := printf "namespace=%q,app=%q,rollouts_pod_template_hash=\"{{args.canary-hash}}\"" .Release.Namespace $name -}}
+{{/*
+Health gate evaluated against the canary pods only. Metrics are scraped by Grafana Alloy
+and remote-written to Prometheus (the local stand-in for Grafana Cloud). Every service
+gets the same three checks; thresholds are tunable per service.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ $name }}-health
+  labels:
+    {{- include "ms.labels" . | nindent 4 }}
+spec:
+  args:
+    - name: canary-hash
+  metrics:
+    # 1. The canary is up and its /metrics endpoint is being scraped.
+    - name: canary-up
+      interval: {{ $a.interval }}
+      count: {{ $a.count }}
+      failureLimit: {{ $a.failureLimit }}
+      successCondition: len(result) > 0 && result[0] >= 1
+      provider:
+        prometheus:
+          address: {{ .Values.global.prometheusAddress }}
+          query: sum(up{ {{- $sel -}} })
+    # 2. HTTP 5xx ratio (http_requests_total{status}).
+    - name: http-error-ratio
+      interval: {{ $a.interval }}
+      count: {{ $a.count }}
+      failureLimit: {{ $a.failureLimit }}
+      successCondition: len(result) == 0 || result[0] <= {{ $a.maxHttpErrorRatio }}
+      provider:
+        prometheus:
+          address: {{ .Values.global.prometheusAddress }}
+          query: >-
+            sum(rate(http_requests_total{ {{- $sel -}} ,status=~"5.."}[1m]))
+            / clamp_min(sum(rate(http_requests_total{ {{- $sel -}} }[1m])), 1e-9)
+    # 3. Background work failure ratio (app_work_items_total{outcome}).
+    - name: work-failure-ratio
+      interval: {{ $a.interval }}
+      count: {{ $a.count }}
+      failureLimit: {{ $a.failureLimit }}
+      successCondition: len(result) == 0 || result[0] <= {{ $a.maxWorkFailureRatio }}
+      provider:
+        prometheus:
+          address: {{ .Values.global.prometheusAddress }}
+          query: >-
+            sum(rate(app_work_items_total{ {{- $sel -}} ,outcome="failure"}[1m]))
+            / clamp_min(sum(rate(app_work_items_total{ {{- $sel -}} }[1m])), 1e-9)
+{{- end }}

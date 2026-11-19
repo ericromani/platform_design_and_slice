@@ -1,0 +1,4 @@
+# Fault-injection overlay for the rollback demo (make break-and-rollback). Applied on top
+# of values-staging.yaml; makes every order fail processing so the canary analysis trips.
+env:
+  FAIL_RATE: "1"

@@ -1,0 +1,17 @@
+# local tool installs and caches (see local/install-tools.sh)
+.tools/
+.venv/
+.tmp/
+local/generated/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+__pycache__/
+*.pyc
+.pytest_cache/
+target/
+dist/
+*.tgz
+
+# IDE settings (JetBrains)
+.idea/

@@ -1,0 +1,28 @@
+# Platform contract (do not remove): /healthz, /readyz and /metrics on the app port.
+spring:
+  application:
+    name: __SERVICE_NAME__
+server:
+  port: 8080
+  shutdown: graceful
+management:
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: health,prometheus
+      path-mapping:
+        prometheus: metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          additional-path: "server:/healthz"
+        readiness:
+          additional-path: "server:/readyz"
+  metrics:
+    distribution:
+      percentiles-histogram:
+        app.work.duration: true

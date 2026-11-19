@@ -1,0 +1,23 @@
+# ACK controller overrides for local mode: talk to LocalStack instead of AWS.
+# Credentials (a fake key whose ID is the LocalStack account ID) come from a per-env
+# Secret created by install.sh; on EKS the controllers use IRSA instead.
+aws:
+  region: us-east-1
+  endpoint_url: http://localstack:4566
+  # STS GetCallerIdentity at startup; kept separate so per-service endpoint overrides
+  # (S3) do not break account discovery.
+  identity_endpoint_url: http://localstack:4566
+  allow_unsafe_aws_endpoint_urls: true
+  credentials:
+    secretName: ack-aws-credentials
+    secretKey: credentials
+    profile: default
+resources:
+  requests:
+    cpu: 10m
+    memory: 48Mi
+  limits:
+    memory: 192Mi
+# Short resync so local demos converge quickly.
+reconcile:
+  defaultResyncPeriod: 60

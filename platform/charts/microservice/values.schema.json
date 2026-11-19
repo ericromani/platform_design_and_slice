@@ -1,0 +1,730 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://platform.example.com/charts/microservice/values.schema.json",
+  "title": "microservice chart values",
+  "description": "Contract for the platform microservice chart. `global` is injected by the deploy pipeline; every other key is developer intent from deploy/values-<env>.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "global",
+    "service",
+    "image",
+    "probes"
+  ],
+  "properties": {
+    "global": {
+      "description": "Environment facts injected by the deploy pipeline. Developers must not set these.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment",
+        "accountId",
+        "region",
+        "clusterName",
+        "oidcProviderArn",
+        "oidcIssuer"
+      ],
+      "properties": {
+        "environment": {
+          "type": "string",
+          "enum": [
+            "staging",
+            "prod"
+          ],
+          "description": "Environment this release targets."
+        },
+        "accountId": {
+          "type": "string",
+          "pattern": "^[0-9]{12}$",
+          "description": "AWS account of the environment."
+        },
+        "region": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(-gov)?-[a-z]+-[0-9]$",
+          "description": "AWS region of the environment."
+        },
+        "clusterName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "EKS cluster name (ALB group naming, tags)."
+        },
+        "oidcProviderArn": {
+          "type": "string",
+          "pattern": "^arn:aws:iam::[0-9]{12}:oidc-provider/.+$",
+          "description": "Cluster IAM OIDC provider, the IRSA trust principal."
+        },
+        "oidcIssuer": {
+          "type": "string",
+          "pattern": "^[^:/]+(/.*)?$",
+          "description": "Issuer host/path without scheme."
+        },
+        "vpcId": {
+          "type": "string",
+          "description": "Environment VPC (RDS security groups)."
+        },
+        "dbSubnetGroupName": {
+          "type": "string",
+          "description": "DB subnet group for service RDS instances."
+        },
+        "nodeSecurityGroupId": {
+          "type": "string",
+          "description": "Cluster node security group admitted by RDS security groups."
+        },
+        "prometheusAddress": {
+          "type": "string",
+          "format": "uri",
+          "description": "Prometheus queried by rollout analysis."
+        },
+        "local": {
+          "type": "boolean",
+          "description": "Local mode (kind + LocalStack): inject IRSA env/token and the endpoint override."
+        },
+        "awsEndpointUrl": {
+          "type": "string",
+          "description": "Local mode only: AWS endpoint override (LocalStack)."
+        },
+        "awsS3EndpointUrl": {
+          "type": "string",
+          "description": "Local mode only: S3 endpoint for virtual-hosted-style requests (LocalStack needs <bucket>.s3.<host>)."
+        },
+        "permissionsBoundaryArn": {
+          "type": "string",
+          "pattern": "^(arn:aws:iam::[0-9]{12}:policy/.+)?$",
+          "description": "Boundary every service role is created with (infra/terraform platform-iam). The ACK IAM controller cannot create roles without it."
+        },
+        "releaseId": {
+          "type": "string",
+          "description": "Unique id of the deploy run (stamped on the pod template)."
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "team"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z]([-a-z0-9]{0,30}[a-z0-9])?$",
+          "description": "DNS-1123 label, max 32 chars (leaves room for AWS name suffixes)."
+        },
+        "team": {
+          "type": "string",
+          "pattern": "^[a-z][-a-z0-9]{1,40}$",
+          "description": "Owning team; label and AWS tag on everything."
+        },
+        "description": {
+          "type": "string",
+          "description": "One-line purpose."
+        }
+      },
+      "description": "Service identity."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "tag"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Image repository (ECR; the local registry in the slice)."
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1,
+          "not": {
+            "enum": [
+              "latest"
+            ]
+          },
+          "description": "Immutable tag (git SHA). `latest` is rejected."
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "IfNotPresent",
+            "Always",
+            "Never"
+          ],
+          "description": "Kubernetes imagePullPolicy."
+        }
+      },
+      "description": "Container image; the pipeline sets tag."
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "Steady-state pods (ignored when autoscaling.enabled)."
+    },
+    "containerPort": {
+      "$ref": "#/definitions/port",
+      "description": "Port the app listens on (named http)."
+    },
+    "env": {
+      "type": "object",
+      "description": "Extra plain env vars. Names reserved for platform injection (AWS_*, SQS_*, SNS_*, S3_*, DYNAMODB_*, RDS_*, PLATFORM_*) are rejected.",
+      "propertyNames": {
+        "pattern": "^[A-Z_][A-Z0-9_]*$",
+        "not": {
+          "pattern": "^(AWS|SQS|SNS|S3|DYNAMODB|RDS|PLATFORM)_"
+        }
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requests"
+      ],
+      "properties": {
+        "requests": {
+          "$ref": "#/definitions/resourceList"
+        },
+        "limits": {
+          "$ref": "#/definitions/resourceList"
+        }
+      },
+      "description": "Container requests/limits."
+    },
+    "probes": {
+      "description": "Health contract. Liveness and readiness endpoints are mandatory.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "liveness",
+        "readiness"
+      ],
+      "properties": {
+        "liveness": {
+          "$ref": "#/definitions/probe"
+        },
+        "readiness": {
+          "$ref": "#/definitions/probe"
+        },
+        "startup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "path": {
+              "$ref": "#/definitions/httpPath"
+            },
+            "failureThreshold": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "periodSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/httpPath"
+        },
+        "port": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/port"
+            }
+          ]
+        }
+      },
+      "description": "Prometheus endpoint (metrics contract); port defaults to containerPort."
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "HPA on CPU targeting the Rollout (replicas is then ignored)."
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "HPA lower bound."
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "HPA upper bound."
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100,
+          "description": "HPA CPU target."
+        }
+      },
+      "description": "CPU autoscaling."
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render a PodDisruptionBudget."
+        },
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Pods kept during voluntary disruptions."
+        }
+      },
+      "description": "Voluntary-disruption protection."
+    },
+    "rollout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "canaryWeights": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 99
+          },
+          "description": "Canary traffic/replica percentages; each step is setWeight -> pause -> analysis."
+        },
+        "pauseSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600,
+          "description": "Pause after each weight before analysis."
+        },
+        "analysis": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Gate canary steps on analysis."
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^[0-9]+(s|m)$",
+              "description": "Measurement interval."
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Measurements per analysis."
+            },
+            "failureLimit": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Failed measurements tolerated."
+            },
+            "maxHttpErrorRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Max 5xx ratio on canary pods."
+            },
+            "maxWorkFailureRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Max app_work_items_total failure ratio on canary pods."
+            }
+          }
+        }
+      },
+      "description": "Progressive delivery and the health gate."
+    },
+    "expose": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": {
+              "$ref": "#/definitions/port"
+            }
+          },
+          "description": "Cluster-internal Service (always rendered)."
+        },
+        "loadBalancer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Provision a load balancer (not available locally)."
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "alb",
+                "nlb"
+              ],
+              "description": "alb (HTTP, Ingress) or nlb (TCP/TLS, Service)."
+            },
+            "scheme": {
+              "type": "string",
+              "enum": [
+                "internal",
+                "internet-facing"
+              ],
+              "description": "internal or internet-facing."
+            },
+            "host": {
+              "type": "string",
+              "description": "ALB host rule."
+            },
+            "path": {
+              "$ref": "#/definitions/httpPath",
+              "description": "ALB path prefix."
+            },
+            "certificateArn": {
+              "type": "string",
+              "description": "ACM certificate; enables HTTPS/TLS."
+            }
+          }
+        }
+      },
+      "description": "How traffic reaches the service."
+    },
+    "aws": {
+      "description": "AWS resources owned by this service. Each entry is provisioned through kro + ACK with an IAM policy scoped to that resource only.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sqs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/sqs"
+          }
+        },
+        "sns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/sns"
+          }
+        },
+        "s3": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/s3"
+          }
+        },
+        "dynamodb": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/dynamodb"
+          }
+        },
+        "rds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/rds"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "httpPath": {
+      "type": "string",
+      "pattern": "^/[-a-zA-Z0-9_./]*$"
+    },
+    "resourceName": {
+      "type": "string",
+      "pattern": "^[a-z]([-a-z0-9]{0,22}[a-z0-9])?$",
+      "description": "Logical name, unique per resource type within the service."
+    },
+    "deletionPolicy": {
+      "type": "string",
+      "enum": [
+        "retain",
+        "delete"
+      ],
+      "description": "What happens to the AWS resource when the service is decommissioned."
+    },
+    "resourceList": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "memory": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi)$"
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/httpPath"
+        },
+        "initialDelaySeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "keyAttr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "binary"
+          ],
+          "description": "Attribute type. Spelled out (not S/N/B) because YAML 1.1 parses a bare N as boolean."
+        }
+      }
+    },
+    "sqs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "access"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>[.fifo]."
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "consume",
+            "publish",
+            "consumepublish"
+          ],
+          "description": "consume | publish | consumepublish."
+        },
+        "fifo": {
+          "type": "boolean",
+          "description": "FIFO queue."
+        },
+        "visibilityTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 43200,
+          "description": "Must exceed worst-case processing time."
+        },
+        "messageRetentionSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 1209600,
+          "description": "Retention."
+        }
+      }
+    },
+    "sns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "access"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>."
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "publish"
+          ],
+          "description": "publish."
+        },
+        "fifo": {
+          "type": "boolean",
+          "description": "FIFO topic."
+        }
+      }
+    },
+    "s3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "access"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>-<account>."
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "read",
+            "readwrite"
+          ],
+          "description": "read | readwrite."
+        },
+        "versioning": {
+          "type": "boolean",
+          "description": "Enable object versioning."
+        },
+        "deletionPolicy": {
+          "$ref": "#/definitions/deletionPolicy"
+        }
+      }
+    },
+    "dynamodb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "access",
+        "partitionKey"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>."
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "read",
+            "readwrite"
+          ],
+          "description": "read | readwrite."
+        },
+        "partitionKey": {
+          "$ref": "#/definitions/keyAttr",
+          "description": "Hash key."
+        },
+        "sortKey": {
+          "$ref": "#/definitions/keyAttr",
+          "description": "Optional range key."
+        },
+        "deletionPolicy": {
+          "$ref": "#/definitions/deletionPolicy"
+        },
+        "deletionProtection": {
+          "type": "boolean",
+          "description": "DynamoDB deletion protection: AWS refuses DeleteTable until it is turned off. Default true in every environment; decommission --delete-data turns it off first."
+        }
+      }
+    },
+    "rds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "engine",
+        "access"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; instance <service>-<name>."
+        },
+        "engine": {
+          "type": "string",
+          "enum": [
+            "postgres",
+            "mysql"
+          ],
+          "description": "Database engine."
+        },
+        "engineVersion": {
+          "type": "string",
+          "description": "Engine version (defaults per engine)."
+        },
+        "instanceClass": {
+          "type": "string",
+          "pattern": "^db\\.[a-z0-9]+\\.[a-z0-9]+$",
+          "description": "Instance class."
+        },
+        "allocatedStorageGB": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 1000,
+          "description": "Storage in GiB."
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "connect"
+          ],
+          "description": "IAM database authentication."
+        },
+        "deletionPolicy": {
+          "$ref": "#/definitions/deletionPolicy"
+        },
+        "deletionProtection": {
+          "type": "boolean",
+          "description": "RDS deletion protection: AWS refuses DeleteDBInstance until it is turned off. Default true in every environment; decommission --delete-data turns it off first."
+        }
+      }
+    }
+  }
+}
