@@ -35,3 +35,12 @@ def test_snippet_validates(tmp_path, snippet):
     f = tmp_path / "values.yaml"
     f.write_text(yaml.safe_dump(values))
     pd.validate_values([f], CHART)
+
+
+def test_chart_readme_reference_is_current():
+    """The chart README's values table is generated from the schema; keep it in sync."""
+    import subprocess
+    import sys
+
+    gen = ROOT / "platform" / "charts" / "microservice" / "ci" / "gen_readme.py"
+    assert subprocess.run([sys.executable, str(gen), "--check"]).returncode == 0

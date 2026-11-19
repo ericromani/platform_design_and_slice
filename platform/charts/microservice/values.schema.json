@@ -30,23 +30,28 @@
           "enum": [
             "staging",
             "prod"
-          ]
+          ],
+          "description": "Environment this release targets."
         },
         "accountId": {
           "type": "string",
-          "pattern": "^[0-9]{12}$"
+          "pattern": "^[0-9]{12}$",
+          "description": "AWS account of the environment."
         },
         "region": {
           "type": "string",
-          "pattern": "^[a-z]{2}(-gov)?-[a-z]+-[0-9]$"
+          "pattern": "^[a-z]{2}(-gov)?-[a-z]+-[0-9]$",
+          "description": "AWS region of the environment."
         },
         "clusterName": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "EKS cluster name (ALB group naming, tags)."
         },
         "oidcProviderArn": {
           "type": "string",
-          "pattern": "^arn:aws:iam::[0-9]{12}:oidc-provider/.+$"
+          "pattern": "^arn:aws:iam::[0-9]{12}:oidc-provider/.+$",
+          "description": "Cluster IAM OIDC provider, the IRSA trust principal."
         },
         "oidcIssuer": {
           "type": "string",
@@ -54,23 +59,29 @@
           "description": "Issuer host/path without scheme."
         },
         "vpcId": {
-          "type": "string"
+          "type": "string",
+          "description": "Environment VPC (RDS security groups)."
         },
         "dbSubnetGroupName": {
-          "type": "string"
+          "type": "string",
+          "description": "DB subnet group for service RDS instances."
         },
         "nodeSecurityGroupId": {
-          "type": "string"
+          "type": "string",
+          "description": "Cluster node security group admitted by RDS security groups."
         },
         "prometheusAddress": {
           "type": "string",
-          "format": "uri"
+          "format": "uri",
+          "description": "Prometheus queried by rollout analysis."
         },
         "local": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Local mode (kind + LocalStack): inject IRSA env/token and the endpoint override."
         },
         "awsEndpointUrl": {
-          "type": "string"
+          "type": "string",
+          "description": "Local mode only: AWS endpoint override (LocalStack)."
         },
         "awsS3EndpointUrl": {
           "type": "string",
@@ -102,12 +113,15 @@
         },
         "team": {
           "type": "string",
-          "pattern": "^[a-z][-a-z0-9]{1,40}$"
+          "pattern": "^[a-z][-a-z0-9]{1,40}$",
+          "description": "Owning team; label and AWS tag on everything."
         },
         "description": {
-          "type": "string"
+          "type": "string",
+          "description": "One-line purpose."
         }
-      }
+      },
+      "description": "Service identity."
     },
     "image": {
       "type": "object",
@@ -119,7 +133,8 @@
       "properties": {
         "repository": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Image repository (ECR; the local registry in the slice)."
         },
         "tag": {
           "type": "string",
@@ -137,17 +152,21 @@
             "IfNotPresent",
             "Always",
             "Never"
-          ]
+          ],
+          "description": "Kubernetes imagePullPolicy."
         }
-      }
+      },
+      "description": "Container image; the pipeline sets tag."
     },
     "replicas": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 50
+      "maximum": 50,
+      "description": "Steady-state pods (ignored when autoscaling.enabled)."
     },
     "containerPort": {
-      "$ref": "#/definitions/port"
+      "$ref": "#/definitions/port",
+      "description": "Port the app listens on (named http)."
     },
     "env": {
       "type": "object",
@@ -179,7 +198,8 @@
         "limits": {
           "$ref": "#/definitions/resourceList"
         }
-      }
+      },
+      "description": "Container requests/limits."
     },
     "probes": {
       "description": "Health contract. Liveness and readiness endpoints are mandatory.",
@@ -238,42 +258,51 @@
             }
           ]
         }
-      }
+      },
+      "description": "Prometheus endpoint (metrics contract); port defaults to containerPort."
     },
     "autoscaling": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "HPA on CPU targeting the Rollout (replicas is then ignored)."
         },
         "minReplicas": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "description": "HPA lower bound."
         },
         "maxReplicas": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "description": "HPA upper bound."
         },
         "targetCPUUtilizationPercentage": {
           "type": "integer",
           "minimum": 10,
-          "maximum": 100
+          "maximum": 100,
+          "description": "HPA CPU target."
         }
-      }
+      },
+      "description": "CPU autoscaling."
     },
     "podDisruptionBudget": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Render a PodDisruptionBudget."
         },
         "minAvailable": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Pods kept during voluntary disruptions."
         }
-      }
+      },
+      "description": "Voluntary-disruption protection."
     },
     "rollout": {
       "type": "object",
@@ -286,45 +315,54 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 99
-          }
+          },
+          "description": "Canary traffic/replica percentages; each step is setWeight -> pause -> analysis."
         },
         "pauseSeconds": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 3600
+          "maximum": 3600,
+          "description": "Pause after each weight before analysis."
         },
         "analysis": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "enabled": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Gate canary steps on analysis."
             },
             "interval": {
               "type": "string",
-              "pattern": "^[0-9]+(s|m)$"
+              "pattern": "^[0-9]+(s|m)$",
+              "description": "Measurement interval."
             },
             "count": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "description": "Measurements per analysis."
             },
             "failureLimit": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Failed measurements tolerated."
             },
             "maxHttpErrorRatio": {
               "type": "number",
               "minimum": 0,
-              "maximum": 1
+              "maximum": 1,
+              "description": "Max 5xx ratio on canary pods."
             },
             "maxWorkFailureRatio": {
               "type": "number",
               "minimum": 0,
-              "maximum": 1
+              "maximum": 1,
+              "description": "Max app_work_items_total failure ratio on canary pods."
             }
           }
         }
-      }
+      },
+      "description": "Progressive delivery and the health gate."
     },
     "expose": {
       "type": "object",
@@ -337,41 +375,49 @@
             "port": {
               "$ref": "#/definitions/port"
             }
-          }
+          },
+          "description": "Cluster-internal Service (always rendered)."
         },
         "loadBalancer": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "enabled": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Provision a load balancer (not available locally)."
             },
             "type": {
               "type": "string",
               "enum": [
                 "alb",
                 "nlb"
-              ]
+              ],
+              "description": "alb (HTTP, Ingress) or nlb (TCP/TLS, Service)."
             },
             "scheme": {
               "type": "string",
               "enum": [
                 "internal",
                 "internet-facing"
-              ]
+              ],
+              "description": "internal or internet-facing."
             },
             "host": {
-              "type": "string"
+              "type": "string",
+              "description": "ALB host rule."
             },
             "path": {
-              "$ref": "#/definitions/httpPath"
+              "$ref": "#/definitions/httpPath",
+              "description": "ALB path prefix."
             },
             "certificateArn": {
-              "type": "string"
+              "type": "string",
+              "description": "ACM certificate; enables HTTPS/TLS."
             }
           }
         }
-      }
+      },
+      "description": "How traffic reaches the service."
     },
     "aws": {
       "description": "AWS resources owned by this service. Each entry is provisioned through kro + ACK with an IAM policy scoped to that resource only.",
@@ -506,7 +552,8 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/resourceName"
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>[.fifo]."
         },
         "access": {
           "type": "string",
@@ -514,20 +561,24 @@
             "consume",
             "publish",
             "consumepublish"
-          ]
+          ],
+          "description": "consume | publish | consumepublish."
         },
         "fifo": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "FIFO queue."
         },
         "visibilityTimeoutSeconds": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 43200
+          "maximum": 43200,
+          "description": "Must exceed worst-case processing time."
         },
         "messageRetentionSeconds": {
           "type": "integer",
           "minimum": 60,
-          "maximum": 1209600
+          "maximum": 1209600,
+          "description": "Retention."
         }
       }
     },
@@ -540,16 +591,19 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/resourceName"
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>."
         },
         "access": {
           "type": "string",
           "enum": [
             "publish"
-          ]
+          ],
+          "description": "publish."
         },
         "fifo": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "FIFO topic."
         }
       }
     },
@@ -562,17 +616,20 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/resourceName"
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>-<account>."
         },
         "access": {
           "type": "string",
           "enum": [
             "read",
             "readwrite"
-          ]
+          ],
+          "description": "read | readwrite."
         },
         "versioning": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable object versioning."
         },
         "deletionPolicy": {
           "$ref": "#/definitions/deletionPolicy"
@@ -589,20 +646,24 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/resourceName"
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; physical <service>-<name>."
         },
         "access": {
           "type": "string",
           "enum": [
             "read",
             "readwrite"
-          ]
+          ],
+          "description": "read | readwrite."
         },
         "partitionKey": {
-          "$ref": "#/definitions/keyAttr"
+          "$ref": "#/definitions/keyAttr",
+          "description": "Hash key."
         },
         "sortKey": {
-          "$ref": "#/definitions/keyAttr"
+          "$ref": "#/definitions/keyAttr",
+          "description": "Optional range key."
         },
         "deletionPolicy": {
           "$ref": "#/definitions/deletionPolicy"
@@ -619,32 +680,38 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/resourceName"
+          "$ref": "#/definitions/resourceName",
+          "description": "Logical name; instance <service>-<name>."
         },
         "engine": {
           "type": "string",
           "enum": [
             "postgres",
             "mysql"
-          ]
+          ],
+          "description": "Database engine."
         },
         "engineVersion": {
-          "type": "string"
+          "type": "string",
+          "description": "Engine version (defaults per engine)."
         },
         "instanceClass": {
           "type": "string",
-          "pattern": "^db\\.[a-z0-9]+\\.[a-z0-9]+$"
+          "pattern": "^db\\.[a-z0-9]+\\.[a-z0-9]+$",
+          "description": "Instance class."
         },
         "allocatedStorageGB": {
           "type": "integer",
           "minimum": 20,
-          "maximum": 1000
+          "maximum": 1000,
+          "description": "Storage in GiB."
         },
         "access": {
           "type": "string",
           "enum": [
             "connect"
-          ]
+          ],
+          "description": "IAM database authentication."
         },
         "deletionPolicy": {
           "$ref": "#/definitions/deletionPolicy"
