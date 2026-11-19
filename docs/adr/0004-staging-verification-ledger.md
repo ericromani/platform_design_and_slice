@@ -15,5 +15,11 @@ credentials, then deploys prod in a separate job in the `production` GitHub envi
 ## Consequences
 - A tag that never passed staging cannot reach prod, even on a re-run.
 - The ledger doubles as an audit trail (kept on decommission).
-- Promotion is keyed on the image tag; staging and prod values can still differ (replicas,
-  canary steps). `validate` and review cover prod-only differences.
+- Promotion is keyed on the image tag (ECR tags are immutable) plus the chart version.
+  Staging and prod values can still differ (replicas, canary steps); `validate` and review
+  cover prod-only differences.
+- The guarantee rests on IAM, not on CLI flags. Deploy roles trust only the platform's
+  reusable workflows (`job_workflow_ref`), prod trusts only promote and decommission, and
+  only the staging role can write the ledger.
+- Verification requires a Successful AnalysisRun of the exact pod hash. First revisions,
+  where Rollouts skips the canary, get a CLI-run verification analysis.

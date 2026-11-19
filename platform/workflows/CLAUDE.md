@@ -25,11 +25,16 @@ workflow (via `github.action_path`), so scripts and workflows cannot drift. Cons
 One implementation for CI and laptops (`make deploy-staging` runs the same commands).
 Subcommands: `validate`, `render`, `deploy`, `promote`, `check-verified`, `decommission`.
 
-- The release gate (`wait_for_release`) is green only when Argo CD is Synced, the
+- The release gate (`wait_for_release`) is green only when Argo CD is Synced and Healthy, the
   Deployment carries the new tag, the Rollout's pod-template hash has moved off the
   pre-deploy hash, and the Rollout is Healthy with stable == current. On abort it reads
   the failed AnalysisRun, re-applies the last good Application, and exits 1.
-- `deploy --env prod` is refused unless called by the promote pipeline.
+- A release is recorded as verified only after a Successful AnalysisRun for its exact pod
+  hash. First revisions get a CLI-run verification analysis.
+- `deploy --env prod` is refused unless called by the promote pipeline. The real
+  enforcement is IAM: deploy roles trust only these reusable workflows (`job_workflow_ref`),
+  and prod trusts only `promote.yaml` and `decommission.yaml`. Promotion also requires the
+  chart version staging verified, and in CI `service.name` must equal the repo name.
 - Unit tests: `tests/test_platform_deploy.py`. Behavioural changes need an e2e run
   (`make demo`) as well.
 

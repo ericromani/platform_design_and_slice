@@ -288,7 +288,11 @@ jobs:
 - All logic lives in `scripts/platform_deploy.py`, which the `Makefile` runs locally. The
   `setup-platform` composite action installs it from the same ref as the workflow.
 
-To adopt in a GitHub org, create the GitHub environments `staging` and `production`
+To adopt in a GitHub org:
+1. Set the org OIDC subject template to include `job_workflow_ref`. The deploy roles trust
+   only the platform's reusable workflows, so a service repo's own job cannot reach prod
+   or forge the staging ledger.
+2. Create the GitHub environments `staging` and `production`
 (add reviewers on production), each with variables `PLATFORM_DEPLOY_ROLE_ARN` (Terraform
 output `deploy_role_arn`), `PLATFORM_CLUSTER_NAME`, `PLATFORM_AWS_REGION` and
 `PLATFORM_ARGO_CHART_REPO`; set an org variable `PLATFORM_BUILD_ROLE_ARN` (ECR push);
@@ -302,6 +306,9 @@ publish the chart to `ghcr.io/example-org/charts`; and tag `platform-workflows` 
   `app_work_items_total{outcome=success|failure|rejected}`, `app_work_duration_seconds`.
   Alloy scrapes annotated pods and remote-writes them (Grafana Cloud in production; the
   local Prometheus here).
+- **Verification**: a release counts as verified only when a Successful AnalysisRun judged
+  its exact pod hash. First revisions, where Rollouts skips the canary, get a verification
+  analysis run by the CLI.
 - **Gate**: each canary step runs an AnalysisRun against the canary pods only
   (`canary-up`, `http-error-ratio`, `work-failure-ratio`; per-service thresholds). On
   failure Argo Rollouts aborts to the stable ReplicaSet. The deploy CLI then re-applies
@@ -365,7 +372,7 @@ Example session:
 | Check | Command | Covers |
 |---|---|---|
 | Everything static | `make test` | all rows below except e2e |
-| Repo tests (50) | `make test-python` | IAM least-privilege proof, deploy CLI, scaffold (all presets), cookbook, README drift |
+| Repo tests (55) | `make test-python` | IAM least-privilege proof, deploy CLI, scaffold (all presets), cookbook, README drift |
 | Chart | `make test-chart` | helm lint, 23 helm-unittest cases, kubeconform, example values |
 | Terraform | `make test-terraform` | fmt + validate for staging, prod and local roots |
 | Workflows | `make test-workflows` | actionlint across central, preset and repo workflows |
@@ -392,6 +399,10 @@ static checks and the preset matrix. The e2e run needs about 8 GiB and is run lo
   the workflows call.
 - The deploy pipeline applies the Argo CD Application directly. A GitOps deploy repo (the
   pipeline commits the tag) is the documented next step.
+- **Re-adopting retained data** (redeploying after a decommission) uses ACK
+  `adopt-or-create`. It works on AWS but not locally, for the same `GetResourcePolicy`
+  reason. `make demo` therefore starts with `make clean-retained`, which drops the
+  LocalStack tables an earlier run retained.
 - kro's `omit()` is an alpha feature (`CELOmitFunction` gate) in kro 0.10.
 
 ## Pinned versions

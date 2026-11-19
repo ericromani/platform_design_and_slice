@@ -97,6 +97,14 @@ Enforcement points, from weakest to strongest:
 3. `platform_deploy.py deploy --env prod` refuses to run outside the promote pipeline.
 4. The `production` GitHub environment holds the only role that can reach the prod
    cluster, and can require reviewers.
+5. The deploy roles trust **only the platform's reusable workflows** at the released ref
+   (`job_workflow_ref` in the GitHub OIDC subject). Prod trusts only `promote.yaml` and
+   `decommission.yaml`. A job a service repo writes itself cannot get prod credentials,
+   and cannot write the staging ledger.
+6. A tag is recorded as verified only if a **Successful AnalysisRun judged its exact pod
+   hash**. On a Rollout's first revision Argo Rollouts skips canary steps, so the CLI runs
+   the same AnalysisTemplate as a verification analysis. Promotion also requires the chart
+   version staging verified, and in CI a repo may only deploy the service it is named after.
 
 ## What one sync does
 
@@ -221,6 +229,11 @@ Known gaps are listed in the README.
 - Values files cannot set `global`, reserved env-var prefixes or `latest` tags.
 - Workflow inputs are passed to scripts through `env:` (no `${{ }}` in `run:`), and
   downloaded tools are checksum-verified.
+- Deploy roles are assumable only from `example-org/platform-workflows` reusable workflows
+  at `refs/tags/v1`, in the matching GitHub environment. This needs the org's OIDC subject
+  template to include `job_workflow_ref` (`gh api -X PUT orgs/<org>/actions/oidc/customization/sub ...`;
+  see `modules/platform-iam`). Only the staging role may write the promotion ledger.
+- ECR repositories are created with immutable tags, so a verified tag cannot be re-pushed.
 - The deploy role has cluster-admin through an EKS access entry for simplicity. Hardening
   step: scope it to `applications.argoproj.io` in `argocd` plus read access in service
   namespaces.
