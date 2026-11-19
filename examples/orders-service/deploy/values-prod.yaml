@@ -1,0 +1,47 @@
+# Developer-owned deploy intent for prod. Validated against the platform chart's
+# values.schema.json before every deploy; `global` is injected by the pipeline.
+# Generated with the new-service skill; edit by hand or ask your agent to update it.
+service:
+  name: orders-service
+  team: commerce
+  description: Consumes order events from SQS and records them in DynamoDB.
+
+image:
+  repository: localhost:5001/orders-service
+  tag: replaced-by-pipeline
+
+replicas: 3
+containerPort: 8080
+
+probes:
+  liveness:
+    path: /healthz
+  readiness:
+    path: /readyz
+
+metrics:
+  path: /metrics
+
+env:
+  LOG_LEVEL: INFO
+  POLL_WAIT_SECONDS: 5
+
+rollout:
+  canaryWeights: [34, 67]
+  pauseSeconds: 30
+  analysis:
+    interval: 15s
+    count: 4
+    failureLimit: 1
+    maxWorkFailureRatio: 0.05
+
+aws:
+  sqs:
+    - name: orders
+      access: consume
+      visibilityTimeoutSeconds: 30
+  dynamodb:
+    - name: orders
+      access: readwrite
+      partitionKey: {name: orderId, type: string}
+      deletionPolicy: retain

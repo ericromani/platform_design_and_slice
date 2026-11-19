@@ -27,6 +27,10 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ include "ms.metricsPort" . | quote }}
         prometheus.io/path: {{ .Values.metrics.path | quote }}
+        {{- with .Values.global.releaseId }}
+        # Unique per pipeline run: every deploy is a distinct, observable release.
+        platform.example.com/release-id: {{ . | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "ms.name" . }}
       automountServiceAccountToken: false

@@ -26,8 +26,10 @@ spec:
       policyArn: ${policy.status.ackResourceMetadata.arn}
   resources:
     - id: table
+      # tableStatus ACTIVE is DynamoDB's own readiness signal. (ACK.ResourceSynced is not
+      # required here: LocalStack Community lacks GetResourcePolicy, which ACK calls on
+      # every sync, so the condition never turns True locally. IAM resources keep it.)
       readyWhen:
-        - '${table.status.?conditions.orValue([]).exists(c, c.type == "ACK.ResourceSynced" && c.status == "True")}'
         - ${table.status.?tableStatus.orValue("") == "ACTIVE"}
       template:
         apiVersion: dynamodb.services.k8s.aws/v1alpha1
