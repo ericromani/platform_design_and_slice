@@ -132,6 +132,30 @@ Full plan, including the platform features migrations still need (adopt-existing
 read-only adoption, a diff gate), per-service phases, data-safety invariants and the wave
 plan: **[docs/migration.md](docs/migration.md)**.
 
+## Proposed next steps
+
+Planned guardrails and features, each with today's state, the gap, a concrete design and
+a "done when" check, in **[docs/next-steps.md](docs/next-steps.md)**:
+
+1. **IAM guardrails**: no wildcard actions or `Resource: "*"`, ever. Enforced by a policy
+   linter in CI, an admission policy on ACK IAM objects in the cluster, and a tightened
+   boundary/SCP in AWS. (Today's boundary still allows `sqs:*` on `*`; that goes first.)
+2. **Peer review before production**: org rulesets requiring a non-author approval on
+   `main`, `production` environment reviewers with no self-review, and a promote-time
+   check that records the approver.
+3. **PagerDuty + Grafana alerting** created with every service: `/new-service` requires
+   the team's PagerDuty service, and Terraform creates the baseline alert rules, a contact
+   point and routing.
+4. **Mandatory autoscaling**: the schema requires an HPA or a KEDA `ScaledObject` (queue
+   consumers scale on queue depth by default).
+5. **Logs shipped off-cluster**: Alloy → Loki (or the org's log store), a JSON log
+   contract in every preset, and secret/PII masking.
+6. **Shared AI vault**: developer skills move to the org's Claude Code plugin marketplace,
+   backed by a packaged `platform-cli`, so nobody clones the platform repo.
+7. **Per-resource standards for agents**: one tested guide per AWS and Kubernetes
+   resource kind (when to use it, required settings, anti-patterns, values and code
+   snippets), loaded by the skills on demand.
+
 ## Repository map
 
 This is one repo for the demo; each top-level area stands in for a separate repository.

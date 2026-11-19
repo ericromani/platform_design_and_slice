@@ -240,6 +240,8 @@ Known gaps are listed in the README.
 
 ## Not in this slice (next steps)
 
+- The proposed guardrails and features roadmap: [next-steps.md](next-steps.md).
+
 - Migrating existing services (adopt-in-place, read-only diff gate, Terraform release):
   see [migration.md](migration.md); the chart features it needs are listed there.
 
