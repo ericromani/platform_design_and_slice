@@ -46,7 +46,9 @@ module "platform_iam" {
   oidc_issuer              = module.eks.oidc_issuer
   github_oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
   github_org               = var.github_org
-  tags                     = local.tags
+  # staging: deploy + promote's verify job + decommission; prod: promote + decommission.
+  deploy_workflows = var.environment == "prod" ? ["promote.yaml", "decommission.yaml"] : ["deploy.yaml", "promote.yaml", "decommission.yaml"]
+  tags             = local.tags
 }
 
 # Cluster facts the deploy pipeline injects as the chart's `global` values.

@@ -4,6 +4,7 @@
   orders_traffic.py send   --env staging --count 20 [--rate 2] [--duration 120]
   orders_traffic.py verify --env staging --expect 20
   orders_traffic.py iam    --env staging      # print the service role's effective policies
+  orders_traffic.py clean-retained            # LocalStack only: drop tables a decommission retained
 
 `send` with --duration keeps a steady stream flowing, which a rollout's analysis needs
 to have data to judge (make break-and-rollback runs it in the background).
@@ -95,6 +96,20 @@ def cmd_iam(a: argparse.Namespace) -> None:
             print(f"  {p['PolicyName']}: {s['Action']} on {s['Resource']}")
 
 
+def cmd_clean_retained(a: argparse.Namespace) -> None:
+    """Delete <service>-* DynamoDB tables left behind by a decommission (deletionPolicy=retain).
+
+    Local convenience so `make demo` can be re-run: LocalStack Community cannot complete
+    ACK's adoption of an existing table (no GetResourcePolicy), which works on AWS.
+    """
+    for env in ACCOUNTS:
+        ddb = client("dynamodb", env)
+        for name in ddb.list_tables()["TableNames"]:
+            if name.startswith(f"{SERVICE}-"):
+                ddb.delete_table(TableName=name)
+                print(f"deleted retained table {name} in {env} ({ACCOUNTS[env]})")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -113,6 +128,8 @@ def main() -> None:
     i = sub.add_parser("iam")
     i.add_argument("--env", default="staging", choices=ACCOUNTS)
     i.set_defaults(fn=cmd_iam)
+    c = sub.add_parser("clean-retained")
+    c.set_defaults(fn=cmd_clean_retained)
     a = p.parse_args()
     a.fn(a)
 

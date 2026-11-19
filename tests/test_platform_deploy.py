@@ -111,3 +111,48 @@ def test_strip_server_fields_keeps_only_reapplyable_metadata():
     }
     out = pd.strip_server_fields(app)
     assert out == {"metadata": {"name": "a", "namespace": "argocd", "annotations": {"k": "v"}}, "spec": {}}
+
+
+def test_promotion_requires_matching_chart_version(monkeypatch):
+    record = {"verifiedAt": "t", "chartVersion": "0.1.0"}
+    monkeypatch.setattr(pd, "read_verification", lambda *_: record)
+    assert pd.require_verification(GLOBALS, "orders-service", "abc", "0.1.0") is record
+    with pytest.raises(pd.PlatformError, match="verified in staging with chart 0.1.0, not 0.2.0"):
+        pd.require_verification(GLOBALS, "orders-service", "abc", "0.2.0")
+
+
+def test_promotion_without_record_is_refused(monkeypatch):
+    monkeypatch.setattr(pd, "read_verification", lambda *_: None)
+    with pytest.raises(pd.PlatformError, match="has no staging verification"):
+        pd.require_verification(GLOBALS, "orders-service", "abc", "0.1.0")
+
+
+def test_ci_repo_may_only_deploy_its_own_service(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "example-org/orders-service")
+    pd.check_repository_owns("orders-service")
+    with pytest.raises(pd.PlatformError, match="does not match repository"):
+        pd.check_repository_owns("payments-service")
+
+
+def test_verification_needs_a_successful_analysis_of_the_exact_hash(monkeypatch):
+    runs = [
+        {"spec": {"args": [{"name": "canary-hash", "value": "old"}]}, "status": {"phase": "Successful"}},
+        {"spec": {"args": [{"name": "canary-hash", "value": "new"}]}, "status": {"phase": "Failed"}},
+    ]
+    monkeypatch.setattr(pd, "analysis_runs", lambda _ns: runs)
+    assert pd.passed_analysis("ns", "old")
+    assert not pd.passed_analysis("ns", "new")
+    assert not pd.passed_analysis("ns", "never-analysed")
+
+
+def test_wait_tolerates_transient_api_errors(monkeypatch):
+    calls = iter([pd.PlatformError("etcdserver: request timed out")])
+
+    def flaky(*args):
+        err = next(calls, None)
+        if err:
+            raise err
+        return None
+
+    monkeypatch.setattr(pd, "kubectl_json", flaky)
+    assert pd.safe_get("get", "rollout", "x") is None  # logged and swallowed, caller retries

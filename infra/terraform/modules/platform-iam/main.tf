@@ -9,6 +9,8 @@ data "aws_region" "current" {}
 locals {
   account = data.aws_caller_identity.current.account_id
   region  = data.aws_region.current.region
+  # GitHub environment names used by the platform workflows.
+  github_environment = var.environment == "prod" ? "production" : var.environment
 }
 
 # ---- 1. workload permissions boundary ----------------------------------------------------
@@ -162,10 +164,19 @@ data "aws_iam_policy_document" "deploy_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
+    # Only the platform's own reusable workflows, at the released ref, running in this
+    # environment, get these credentials; a job a service repo writes itself cannot. This
+    # is what makes "prod only via promote" and the staging ledger unforgeable. Requires
+    # the org OIDC subject template to include job_workflow_ref:
+    #   gh api -X PUT orgs/<org>/actions/oidc/customization/sub \
+    #     -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_org}/*:environment:${var.environment}"]
+      values = [
+        for wf in var.deploy_workflows :
+        "repo:${var.github_org}/*:environment:${local.github_environment}:job_workflow_ref:${var.platform_workflows_repo}/.github/workflows/${wf}@${var.platform_workflows_ref}"
+      ]
     }
   }
 }
@@ -188,7 +199,7 @@ resource "aws_iam_role_policy" "deploy" {
       {
         Sid      = "PromotionLedger"
         Effect   = "Allow"
-        Action   = ["ssm:GetParameter", "ssm:PutParameter", "ssm:GetParametersByPath", "ssm:DeleteParameter"]
+        Action   = var.environment == "staging" ? ["ssm:GetParameter", "ssm:PutParameter", "ssm:GetParametersByPath"] : ["ssm:GetParameter"]
         Resource = "arn:aws:ssm:${local.region}:${local.account}:parameter/platform/promotions/*"
       },
     ]

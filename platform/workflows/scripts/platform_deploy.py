@@ -309,24 +309,37 @@ def rollout_hash(service: str, env: str) -> str | None:
     return (rollout or {}).get("status", {}).get("currentPodHash")
 
 
-def wait_for_release(service: str, env: str, tag: str, previous_hash: str | None, timeout: int) -> tuple[bool, str]:
-    """Block until the newly applied release is fully promoted (True) or aborted (False).
+def safe_get(*args: str) -> dict[str, Any] | None:
+    """kubectl get that tolerates transient API errors (logged; the caller retries)."""
+    try:
+        return kubectl_json(*args)
+    except PlatformError as exc:
+        log(f"transient: {exc}; retrying")
+        return None
 
-    Every deploy stamps a unique release-id on the pod template, so a new release always
-    has a new pod-template hash; waiting for the hash to move off `previous_hash` stops
-    us from mistaking the previous release's Healthy state for the new one's.
-    Healthy means: Argo CD synced, the Deployment carries `tag`, and the Rollout finished
-    every canary step with passing analysis (stable ReplicaSet == current hash).
+
+def wait_for_release(
+    service: str, env: str, tag: str, previous_hash: str | None, timeout: int, *, rollback: bool = False
+) -> tuple[bool, str]:
+    """Block until the applied release is fully promoted (True) or aborted (False).
+
+    Normal mode: every deploy stamps a unique release-id on the pod template, so a new
+    release always has a new pod-template hash; we wait for the hash to move off
+    `previous_hash` so the previous release's Healthy state is never mistaken for ours.
+    Rollback mode: the target is a release that already ran, so we only wait for the
+    Rollout to settle Healthy on `tag` (abort state left by the failed release is ignored).
+    Healthy = Argo CD Synced + Healthy, the Deployment carries `tag`, and the Rollout has
+    finished every step with stable ReplicaSet == current hash.
     """
     ns = f"{service}-{env}"
     deadline = time.monotonic() + timeout
     last = ""
     while time.monotonic() < deadline:
-        app = kubectl_json("get", "application", app_name(service, env), "-n", "argocd") or {}
+        app = safe_get("get", "application", app_name(service, env), "-n", "argocd") or {}
+        deploy = safe_get("get", "deployment", service, "-n", ns) or {}
+        rollout = safe_get("get", "rollout", service, "-n", ns) or {}
         st = app.get("status", {})
         sync, health = st.get("sync", {}).get("status", "?"), st.get("health", {}).get("status", "?")
-        deploy = kubectl_json("get", "deployment", service, "-n", ns) or {}
-        rollout = kubectl_json("get", "rollout", service, "-n", ns) or {}
         containers = deploy.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or [{}]
         rs = rollout.get("status", {})
         phase, message = rs.get("phase", "Pending"), rs.get("message", "")
@@ -338,16 +351,60 @@ def wait_for_release(service: str, env: str, tag: str, previous_hash: str | None
         if state != last:
             log(state)
             last = state
-        is_new = containers[0].get("image", "").endswith(f":{tag}") and rs.get("currentPodHash") not in (
-            None,
-            previous_hash,
-        )
-        if is_new and (rs.get("abort") or phase == "Degraded"):
+        on_tag = containers[0].get("image", "").endswith(f":{tag}")
+        is_new = on_tag and (rollback or rs.get("currentPodHash") not in (None, previous_hash))
+        if is_new and not rollback and (rs.get("abort") or phase == "Degraded"):
             return False, analysis_failure_summary(ns) or message or "rollout degraded"
-        if is_new and phase == "Healthy" and rs.get("stableRS") == rs.get("currentPodHash") and sync == "Synced":
+        settled = phase == "Healthy" and rs.get("stableRS") == rs.get("currentPodHash") and not rs.get("abort")
+        if is_new and settled and sync == "Synced" and health == "Healthy":
             return True, "release healthy"
         time.sleep(5)
     return False, f"timed out after {timeout}s ({last})"
+
+
+def analysis_runs(namespace: str) -> list[dict[str, Any]]:
+    return (safe_get("get", "analysisruns", "-n", namespace) or {"items": []})["items"]
+
+
+def passed_analysis(namespace: str, pod_hash: str) -> bool:
+    """A Successful AnalysisRun judged exactly this pod-template hash."""
+    for run_ in analysis_runs(namespace):
+        args = {x["name"]: x.get("value") for x in run_.get("spec", {}).get("args", [])}
+        if args.get("canary-hash") == pod_hash and run_.get("status", {}).get("phase") == "Successful":
+            return True
+    return False
+
+
+def run_verification_analysis(service: str, env: str, pod_hash: str, timeout: int) -> tuple[bool, str]:
+    """Run the service's health AnalysisTemplate against `pod_hash` outside a canary.
+
+    Argo Rollouts skips canary steps (and so analysis) on a Rollout's first revision. A
+    release must never be recorded as verified without metrics having judged it, so the
+    deploy CLI runs the same analysis itself in that case.
+    """
+    ns = f"{service}-{env}"
+    template = kubectl_json("get", "analysistemplate", f"{service}-health", "-n", ns)
+    if template is None:
+        return False, "rollout.analysis is disabled; releases without analysis are not verifiable"
+    name = f"{service}-verify-{pod_hash}-{int(time.time())}"
+    apply(
+        {
+            "apiVersion": "argoproj.io/v1alpha1",
+            "kind": "AnalysisRun",
+            "metadata": {"name": name, "namespace": ns, "labels": {"platform.example.com/verification": "true"}},
+            "spec": {"args": [{"name": "canary-hash", "value": pod_hash}], "metrics": template["spec"]["metrics"]},
+        }
+    )
+    log(f"no canary analysis ran for {pod_hash} (first revision): running verification analysis {name}")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        phase = ((safe_get("get", "analysisrun", name, "-n", ns) or {}).get("status") or {}).get("phase")
+        if phase == "Successful":
+            return True, "verification analysis passed"
+        if phase in ("Failed", "Error", "Inconclusive"):
+            return False, analysis_failure_summary(ns) or f"verification analysis {phase}"
+        time.sleep(5)
+    return False, f"verification analysis timed out after {timeout}s"
 
 
 def current_application(service: str, env: str) -> dict[str, Any] | None:
@@ -404,6 +461,14 @@ def cmd_render(a: argparse.Namespace) -> None:
     sys.stdout.write(helm_render(values, Path(a.chart), f"{values['service']['name']}-{a.env}"))
 
 
+def check_repository_owns(service: str) -> None:
+    """In CI, a repo may only deploy the service it is named after (scaffold names repos
+    after their service), so one team cannot overwrite another team's Application."""
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if repo and repo.split("/", 1)[1] != service:
+        raise PlatformError(f"service.name {service!r} does not match repository {repo!r}")
+
+
 def do_deploy(a: argparse.Namespace, env: str) -> None:
     chart = Path(a.chart)
     dev = validate_values([Path(v) for v in a.values], chart)
@@ -411,6 +476,7 @@ def do_deploy(a: argparse.Namespace, env: str) -> None:
     release_id = new_release_id()
     values = deploy_values(dev, g, a.tag, release_id)
     service = values["service"]["name"]
+    check_repository_owns(service)
     version = a.chart_version or chart_version(chart)
     helm_render(values, chart, f"{service}-{env}")  # fail fast on template errors
     log(f"deploying {service}:{a.tag} to {env} as release {release_id} (chart microservice {version})")
@@ -420,10 +486,18 @@ def do_deploy(a: argparse.Namespace, env: str) -> None:
     previous_hash = rollout_hash(service, env)
     apply(build_application(values, env, a.chart_repo, version))
 
-    ok, reason = wait_for_release(service, env, a.tag, previous_hash, a.timeout)
+    try:
+        ok, reason = wait_for_release(service, env, a.tag, previous_hash, a.timeout)
+        if ok:
+            new_hash = rollout_hash(service, env) or ""
+            if not passed_analysis(f"{service}-{env}", new_hash):
+                ok, reason = run_verification_analysis(service, env, new_hash, a.timeout)
+    except Exception as exc:  # any failure while judging the release still rolls back
+        ok, reason = False, f"error while verifying the release: {exc}"
+
     if ok:
         mark_last_good(service, env, release_id)
-        log(f"{service}:{a.tag} is healthy in {env}")
+        log(f"{service}:{a.tag} is healthy in {env} ({reason})")
         if env == "staging":
             record_verification(g, service, a.tag, values, version)
         return
@@ -432,9 +506,8 @@ def do_deploy(a: argparse.Namespace, env: str) -> None:
     if previous is not None and last_good and release_of(previous) == last_good:
         good_tag = previous["spec"]["source"]["helm"]["valuesObject"]["image"]["tag"]
         log(f"rolling back {service} in {env} to last good release {last_good} ({good_tag})")
-        failed_hash = rollout_hash(service, env)
         apply(strip_server_fields(previous))
-        rb_ok, rb_reason = wait_for_release(service, env, good_tag, failed_hash, a.timeout)
+        rb_ok, rb_reason = wait_for_release(service, env, good_tag, None, a.timeout, rollback=True)
         log(f"rollback {'complete' if rb_ok else 'FAILED: ' + rb_reason}; {service} runs {good_tag}")
     else:
         log("no previous healthy release to roll back to; leaving the failed release for inspection")
@@ -451,16 +524,22 @@ def cmd_promote(a: argparse.Namespace) -> None:
     """Local/one-credential promotion: check the staging ledger, then deploy to prod."""
     dev = validate_values([Path(v) for v in a.values], Path(a.chart))
     staging_g = load_globals("staging", a.staging_globals, a.globals_ssm)
-    require_verification(staging_g, dev["service"]["name"], a.tag)
+    require_verification(staging_g, dev["service"]["name"], a.tag, a.chart_version or chart_version(Path(a.chart)))
     do_deploy(a, "prod")
 
 
-def require_verification(staging_g: dict[str, Any], service: str, tag: str) -> dict[str, Any]:
+def require_verification(staging_g: dict[str, Any], service: str, tag: str, chart_ver: str) -> dict[str, Any]:
+    check_repository_owns(service)
     record = read_verification(staging_g, service, tag)
     if record is None:
         raise PlatformError(
             f"{service}:{tag} has no staging verification ({ledger_key(service, tag)}). "
             "Deploy it to staging and let the rollout analysis pass first."
+        )
+    if record.get("chartVersion") != chart_ver:
+        raise PlatformError(
+            f"{service}:{tag} was verified in staging with chart {record.get('chartVersion')}, not {chart_ver}; "
+            "redeploy it to staging with this chart version first"
         )
     log(f"staging verification found: verified {record['verifiedAt']} with chart {record['chartVersion']}")
     return record
@@ -469,7 +548,12 @@ def require_verification(staging_g: dict[str, Any], service: str, tag: str) -> d
 def cmd_check_verified(a: argparse.Namespace) -> None:
     """CI step 1 of promotion, run with staging credentials (GitHub environment: staging)."""
     dev = validate_values([Path(v) for v in a.values], Path(a.chart))
-    require_verification(load_globals("staging", a.globals, a.globals_ssm), dev["service"]["name"], a.tag)
+    require_verification(
+        load_globals("staging", a.globals, a.globals_ssm),
+        dev["service"]["name"],
+        a.tag,
+        a.chart_version or chart_version(Path(a.chart)),
+    )
 
 
 def stuck_resources(namespace: str) -> list[str]:
@@ -491,6 +575,24 @@ def stuck_resources(namespace: str) -> list[str]:
         msgs = [c["message"] for c in conds]
         out.append(f"{obj['kind']}/{obj['metadata']['name']}: {next((m for m in msgs if m), 'waiting')}")
     return out or ["(none found; check the Argo CD Application events)"]
+
+
+def wait_for_deletion_policy(namespace: str, timeout: int) -> None:
+    """Block until every ACK data store in `namespace` carries deletion-policy=delete."""
+    kinds = "tables.dynamodb.services.k8s.aws,buckets.s3.services.k8s.aws,dbinstances.rds.services.k8s.aws"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        items = (safe_get("get", kinds, "-n", namespace) or {"items": []})["items"]
+        pending = [
+            f"{o['kind']}/{o['metadata']['name']}"
+            for o in items
+            if o["metadata"].get("annotations", {}).get("services.k8s.aws/deletion-policy") != "delete"
+        ]
+        if not pending:
+            return
+        log(f"waiting for deletion-policy=delete on {pending}")
+        time.sleep(5)
+    raise PlatformError(f"data stores in {namespace} did not switch to deletion-policy=delete within {timeout}s")
 
 
 def cmd_decommission(a: argparse.Namespace) -> None:
@@ -519,7 +621,7 @@ def cmd_decommission(a: argparse.Namespace) -> None:
                 item["deletionPolicy"] = "delete"
         app["spec"]["source"]["helm"]["valuesObject"] = values
         apply(strip_server_fields(app))
-        time.sleep(20)  # let Argo CD + kro propagate the new annotation to ACK
+        wait_for_deletion_policy(f"{service}-{env}", a.timeout)
         retained = []
 
     log(f"deleting Application {app_name(service, env)} (cascades to every resource it created)")
@@ -606,6 +708,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sp = sub.add_parser("check-verified", help="fail unless the tag passed staging (promotion step 1)")
     common(sp, env=False)
+    sp.add_argument("--chart-version", help="chart version prod will deploy (default: Chart.yaml)")
     sp.set_defaults(fn=cmd_check_verified)
 
     sp = sub.add_parser("decommission")
@@ -618,9 +721,22 @@ def main(argv: list[str] | None = None) -> int:
 
     a = p.parse_args(argv)
     try:
+        from botocore.exceptions import BotoCoreError, ClientError
+    except ImportError:  # validate/render do not need boto3
+        BotoCoreError = ClientError = PlatformError  # noqa: N806
+    try:
         a.fn(a)
     except PlatformError as exc:
         print(f"[platform] ERROR: {exc}", file=sys.stderr)
+        return 1
+    except (BotoCoreError, ClientError) as exc:
+        print(f"[platform] ERROR: AWS call failed: {exc}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as exc:
+        print(f"[platform] ERROR: required tool or file not found: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"[platform] ERROR: malformed JSON from a platform record or kubectl: {exc}", file=sys.stderr)
         return 1
     return 0
 

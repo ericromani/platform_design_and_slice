@@ -74,7 +74,7 @@ down: ## Delete the cluster and containers
 	$(ENV) ./local/down.sh
 
 # ---- journeys -----------------------------------------------------------------------
-.PHONY: build deploy-staging verify update break-and-rollback promote iam decommission demo
+.PHONY: build deploy-staging verify update break-and-rollback promote iam decommission clean-retained demo
 build: ## Build + push the service image (tag = short git SHA)
 	$(ENV) podman build -q -t $(IMAGE) $(SERVICE_DIR) && podman push -q --tls-verify=false $(IMAGE)
 
@@ -106,6 +106,9 @@ decommission: ## Journey 3: remove the service from staging, then prod (data ret
 	$(ENV) $(DEPLOY) decommission --service $(SERVICE) --env staging
 	$(ENV) $(DEPLOY) decommission --service $(SERVICE) --env prod
 
-demo: deploy-staging verify update break-and-rollback promote ## All journeys end to end, then decommission
+clean-retained: ## LocalStack only: drop tables retained by a previous decommission (makes demo re-runnable)
+	$(ENV) $(PY) local/orders_traffic.py clean-retained
+
+demo: clean-retained deploy-staging verify update break-and-rollback promote ## All journeys end to end, then decommission
 	ENV_NAME=prod $(MAKE) verify iam
 	$(MAKE) decommission

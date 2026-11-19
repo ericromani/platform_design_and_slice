@@ -41,3 +41,21 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "platform_workflows_repo" {
+  description = "Repository holding the reusable workflows (owner/name). Only its workflows may assume the deploy role."
+  type        = string
+  default     = "example-org/platform-workflows"
+}
+
+variable "platform_workflows_ref" {
+  description = "Git ref the trusted reusable workflows must run from."
+  type        = string
+  default     = "refs/tags/v1"
+}
+
+variable "deploy_workflows" {
+  description = "Reusable workflow files allowed to assume this environment's deploy role (staging: deploy, promote's verify job, decommission; prod: promote, decommission)."
+  type        = list(string)
+  default     = ["deploy.yaml", "promote.yaml", "decommission.yaml"]
+}
