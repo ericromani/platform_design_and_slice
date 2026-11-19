@@ -73,6 +73,8 @@ webhook would otherwise inject.
   value: {{ include "ms.name" . | quote }}
 - name: PLATFORM_ENVIRONMENT
   value: {{ include "ms.env" . | quote }}
+- name: PLATFORM_VERSION
+  value: {{ .Values.image.tag | quote }}
 - name: AWS_REGION
   value: {{ .Values.global.region | quote }}
 - name: AWS_DEFAULT_REGION

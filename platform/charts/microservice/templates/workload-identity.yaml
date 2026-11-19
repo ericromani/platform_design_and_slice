@@ -28,6 +28,7 @@ spec:
   serviceAccount: {{ $svc }}
   oidcProviderArn: {{ .Values.global.oidcProviderArn }}
   oidcIssuer: {{ .Values.global.oidcIssuer }}
+  permissionsBoundaryArn: {{ .Values.global.permissionsBoundaryArn | default "" | quote }}
   resourceInstances:
     {{- toYaml $policies | nindent 4 }}
 {{- end }}

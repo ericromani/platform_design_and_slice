@@ -20,6 +20,7 @@ spec:
       serviceAccount: string | required=true
       oidcProviderArn: string | required=true
       oidcIssuer: string | required=true
+      permissionsBoundaryArn: string | default=""
       # Names of this service's other platform instances (same namespace); each owns a
       # "<instance>-policy" ACK Policy that gets attached.
       resourceInstances: "[]string | required=true"
@@ -42,6 +43,8 @@ spec:
           name: ${schema.spec.roleName}
           description: ${"IRSA role for " + schema.spec.service + " (" + schema.spec.environment + ")"}
           maxSessionDuration: 3600
+          # Required in real accounts: the ACK IAM controller may only create bounded roles.
+          permissionsBoundary: '${schema.spec.permissionsBoundaryArn != "" ? schema.spec.permissionsBoundaryArn : omit()}'
           assumeRolePolicyDocument: >-
             ${'{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Federated":"' + schema.spec.oidcProviderArn +
             '"},"Action":"sts:AssumeRoleWithWebIdentity","Condition":{"StringEquals":{"' + schema.spec.oidcIssuer +

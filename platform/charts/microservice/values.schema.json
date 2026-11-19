@@ -75,6 +75,11 @@
         "awsS3EndpointUrl": {
           "type": "string",
           "description": "Local mode only: S3 endpoint for virtual-hosted-style requests (LocalStack needs <bucket>.s3.<host>)."
+        },
+        "permissionsBoundaryArn": {
+          "type": "string",
+          "pattern": "^(arn:aws:iam::[0-9]{12}:policy/.+)?$",
+          "description": "Boundary every service role is created with (infra/terraform platform-iam). The ACK IAM controller cannot create roles without it."
         }
       }
     },

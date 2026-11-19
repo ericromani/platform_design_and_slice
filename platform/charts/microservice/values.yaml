@@ -25,6 +25,8 @@ global:
   vpcId: ""
   dbSubnetGroupName: ""
   nodeSecurityGroupId: ""
+  # Permissions boundary every service role must carry (infra/terraform platform-iam).
+  permissionsBoundaryArn: ""
   # In-cluster Prometheus (fed by Alloy) queried by rollout analysis.
   prometheusAddress: http://kps-prometheus.monitoring.svc:9090
   # Local mode (kind + LocalStack): inject the IRSA env/token the EKS pod-identity
